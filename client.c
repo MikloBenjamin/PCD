@@ -21,6 +21,8 @@
 bool message_received = false;
 bool server_closed = false;
 
+pthread_t receiver, messenger;
+
 void* receive_message(void *socketfd)
 {
     int *socket_ref = (int*)(socketfd);
@@ -39,8 +41,9 @@ void* receive_message(void *socketfd)
         message_received = false;
         if ((strncmp(buff, "exit", 4)) == 0 || strlen(buff) == 0)
         {
+            printf("\n!!! SERVER CLOSED CONNECTION !!!\n");
             printf("Client Exit!\n");
-            server_closed = true;
+            pthread_kill(messenger, 9);
             break;
         }
     }
@@ -60,33 +63,24 @@ void* create_message(void *socketfd)
         
         n = 0;
 
-        while (buff[n] != '\n')
+        while (buff[n - 1] != '\n')
         {
             if (message_received)
             {
                 printf("\nEnter the message you want to send: %s", buff);
                 message_received = false;
             }
-            if (server_closed)
-            {
-                break;
-            }
             buff[n++] = getchar();
-        }
-
-        if (server_closed)
-        {
-            printf("\n!!! SERVER CLOSED CONNECTION !!!\n");
-            break;
         }
 
         strcpy(buff, trim(buff));
 
         if (strcmp(buff, "\n") != 0)
         {
+            printf("Sending message: %s\n", buff);
             write(sockfd, buff, sizeof(buff));
-
             bzero(buff, sizeof(buff));
+            printf("Enter the message you want to send: ");
         }
     }
 }
@@ -124,12 +118,10 @@ int main(int argc, char* argv[])
         printf("Successfully connected to the server!\n");
     }
 
-    pthread_t receiver, messenger;
     pthread_create(&receiver, NULL, receive_message, &sockfd);
     pthread_create(&messenger, NULL, create_message, &sockfd);
-    // create_message(sockfd);
 
-    close(sockfd);
     pthread_exit(NULL);
+    close(sockfd);
 }
 

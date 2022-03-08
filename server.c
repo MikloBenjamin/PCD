@@ -6,6 +6,8 @@
 Request requests[MAX_REQUESTS];
 int sizeof_requests = 0;
 
+pthread_t server, client;
+
 void create_request(char* message)
 {
     if (sizeof_requests >= MAX_REQUESTS)
@@ -37,37 +39,35 @@ void* task_server(void* param)
     }
 }
 
-void read_client(int connfd)
+void* read_client(void* conn)
 {
+    int *conn_ref = (int*)(conn);
+    int connfd = *conn_ref;
+
     char buff[MAX_SIZE];
     int n;
 
-    while(true)
+    while (true)
     {
-        // bzero(buff, MAX_SIZE);
-        // strcpy(buff, "Message received, please be patient.\n");
-   
-        // // send "message received" back to client
-        // write(connfd, buff, sizeof(buff));
-
         bzero(buff, MAX_SIZE);
-   
         read(connfd, buff, sizeof(buff));
 
-        // print buffer which contains the client contents
-        // printf("From client: %s\t To client : ", buff);
-        create_request(buff);
+        printf("From client: %s with length: %ld\n", buff, strlen(buff));
 
-        bzero(buff, MAX_SIZE);
-        strcpy(buff, "Message received, please be patient.\n");
-   
-        // send "message received" back to client
-        write(connfd, buff, sizeof(buff));
-   
-        // if msg contains "Exit" then server exit and chat ended.
-        if (strncmp("exit", buff, 4) == 0) {
-            printf("Server Exit...\n");
+        if (strcmp(buff, "exit") == 0 || strlen(buff) == 0)
+        {
+            printf("Leaving\n");
+            pthread_kill(server, 9);
             break;
+        }
+
+        if (strlen(buff) > 1)
+        {
+            printf("creating request...\n");
+            create_request(buff);
+            bzero(buff, MAX_SIZE);
+            strcpy(buff, "Message received, please be patient.\n");
+            write(connfd, buff, sizeof(buff));
         }
     }
 }
@@ -106,7 +106,6 @@ void* run_server(void* port)
         printf("Succesfully bound socket!\n");
     }
 
-    pthread_t server;
     pthread_create(&server, NULL, task_server, NULL);
 
     if ((listen(sockfd, 10)) != 0) {
@@ -130,9 +129,8 @@ void* run_server(void* port)
         printf("Client connected succesfully!\n");
     }
 
-    read_client(connfd);
-
-    close(sockfd);
+    pthread_create(&client, NULL, read_client, &connfd);
 
     pthread_exit(NULL);
+    close(sockfd);
 }
