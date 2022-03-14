@@ -292,7 +292,7 @@ void process_request(Request request, int socket_fd)
         break;
 
     case 2:         // Pachet cu informatii despre poza care urmeaza sa fie trimisa
-        processed_img_handler = fopen("/home/mihai/Desktop/output/bb.png", "wb");
+        processed_img_handler = fopen("/home/mihai/Desktop/output/cc.png", "wb");
 
         if (!processed_img_handler)
         {
