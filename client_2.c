@@ -10,6 +10,8 @@
 #include <arpa/inet.h>
 #include <semaphore.h>
 #include <errno.h>
+#include <sys/stat.h>
+#include <linux/limits.h>
 
 #define MAX_SIZE 1024
 #define MAX_REQUESTS 100
@@ -24,10 +26,20 @@ sem_t sem_full;                 // Semafor care tine evidenta cate locuri ocupat
 sem_t sem_send_package;         // Semafor care asteapta dupa confirmarea de primire de pachet
 sem_t sem_terminate_processes;  // Semafor care se face 1 atunci cand toate pozele au fost prelucrate, adica cand total_images == 0
 
+struct png_names
+{
+    char **names;
+    int len;
+    int current_index;
+};
+
+
 struct thread_parameters
 {
     char *path;
+    char *output_path;
     int socket_fd;
+    struct png_names png_info;
 };
 
 typedef struct Request
@@ -212,33 +224,16 @@ void *find_images(void *args)
 {
     //int socket_fd;
     struct thread_parameters *parameters = (struct thread_parameters *)args;
-    DIR *dir_descriptor;
-    struct dirent *dir;
-    dir_descriptor = opendir(parameters->path);
 
     printf("Thread: %s\n", parameters->path);
 
     // Initializam numarul total de poze - 1
     set_number_of_total_images(parameters->path);
 
-    if (dir_descriptor != NULL)
-    {   
-        while ((dir = readdir(dir_descriptor)) != NULL)
-        {
-            // Alegem doar fisierele regulare, doar acelea pot reprezenta potentiale poze
-            if (dir->d_type == DT_REG && is_png(dir->d_name))
-            {
-                fprintf(stderr,"%s", dir->d_name);
-                read_and_send_image(parameters->path, dir->d_name, parameters->socket_fd);
-            }
-        }
-
-        closedir(dir_descriptor);
-    }
-    else
+    for (int i = 0; i < parameters->png_info.len; i++)
     {
-        fprintf(stderr, "Could not open path: %s\n", parameters->path);
-        exit(1);
+        fprintf(stderr,"%s", parameters->png_info.names[i]);
+        read_and_send_image(parameters->path, parameters->png_info.names[i], parameters->socket_fd);
     }
 
     pthread_exit(0);
@@ -274,7 +269,7 @@ int establish_connection()
     return socket_fd;
 }
 
-void process_request(Request request, int socket_fd)
+void process_request(Request request, int socket_fd, char *output_dir_path, struct png_names *png_info)
 {
     // Buffer-ul in care se vor citi bucatile imagini
     char buffer[MAX_SIZE];
@@ -292,30 +287,46 @@ void process_request(Request request, int socket_fd)
         break;
 
     case 2:         // Pachet cu informatii despre poza care urmeaza sa fie trimisa
-        processed_img_handler = fopen("/home/mihai/Desktop/output/cc.png", "wb");
+        char processed_img_path[PATH_MAX];
 
-        if (!processed_img_handler)
+        // Contruim calea spre locul unde va fi pusa poza noua
+        //fprintf(stderr, "%s", png_info->names[png_info->current_index]);
+        if (png_info->current_index < png_info->len)
         {
-            fprintf(stderr, "Could not open image for reading: \n");
-            //free(image_path); 
-            close(socket_fd);
-            //free(request.message); DE DECOMENTAT DOAR DACA PUNEM SI NUMELE IN PACHET
-            exit(2);
+            strcpy(processed_img_path, output_dir_path);
+            strcat(processed_img_path, "/");
+            strcat(processed_img_path, png_info->names[png_info->current_index++]);
+
+            processed_img_handler = fopen(processed_img_path, "wb");
+
+            if (!processed_img_handler)
+            {
+                fprintf(stderr, "Could not open image for reading: \n");
+                //free(image_path); 
+                close(socket_fd);
+                //free(request.message); DE DECOMENTAT DOAR DACA PUNEM SI NUMELE IN PACHET
+                exit(2);
+            }
+
+            total_packages = request.length;
+            current_package = 0;
+
+            // Trimitere confirmare de primire pachet
+            buffer[0] = 1;
+
+            if (send(socket_fd, buffer, 1, 0) == -1)
+            {
+                fprintf(stderr, "Error while sending the data.\n");
+                //free(request.message); DE DECOMENTAT DOAR DACA PUNEM SI NUMELE IN PACHET
+                fclose(processed_img_handler);
+                close(socket_fd);
+                exit(4);
+            }
         }
-
-        total_packages = request.length;
-        current_package = 0;
-
-        // Trimitere confirmare de primire pachet
-        buffer[0] = 1;
-
-        if (send(socket_fd, buffer, 1, 0) == -1)
+        else
         {
-            fprintf(stderr, "Error while sending the data.\n");
-            //free(request.message); DE DECOMENTAT DOAR DACA PUNEM SI NUMELE IN PACHET
-            fclose(processed_img_handler);
-            close(socket_fd);
-            exit(4);
+            fprintf(stderr, "Wrong server message order.\n");
+            exit(7);
         }
 
         break;
@@ -381,9 +392,7 @@ void process_request(Request request, int socket_fd)
 void *manage_requests(void *args)
 {
     Request request;
-    int socket_fd;
-
-    socket_fd = *((int *)args);
+    struct thread_parameters *parameters = (struct thread_parameters *)args;
 
     while (1)
     {
@@ -399,7 +408,7 @@ void *manage_requests(void *args)
         pthread_mutex_unlock(&mutex_buffer);
         sem_post(&sem_empty);    // Cand apare un loc liber, atunci incrementam cate locuri pline sunt, ptr ca am adaugat un element
 
-        process_request(request, socket_fd);   // Trimitem mesajul la procesat
+        process_request(request, parameters->socket_fd, parameters->output_path, &(parameters->png_info));   // Trimitem mesajul la procesat
     }
 }
 
@@ -413,12 +422,10 @@ void *read_requests(void *args)
     {
         Request request;
 
-        int i = recv(socket_fd, buffer, MAX_SIZE, 0);
-
-        if (i == -1)
+        if (recv(socket_fd, buffer, MAX_SIZE, 0) == -1)
         {
-        fprintf(stderr, "%d", errno);
-        perror(NULL);
+            fprintf(stderr, "Error while reading from socket: %d", errno);
+            perror(NULL);
         }
 
         request.message_type = buffer[0];               // Dam X
@@ -442,6 +449,121 @@ void *read_requests(void *args)
     }
 
     pthread_exit(0);
+}
+
+int check_if_dir_exists(char *path)
+{
+    DIR* dir = opendir(path);
+    if (dir) 
+    {
+        closedir(dir);
+        return 1;
+    } 
+    else if (ENOENT == errno) 
+    {
+        return 0;
+    }
+    else 
+    {
+        fprintf(stderr, "Error while opening the folder: %s.\n", path);
+        free(path);
+        exit(6);
+    }
+}
+
+char *create_output_dir(char *path)
+{
+    char *output_path;
+
+    // Daca cumva calea se termina cu /
+    if (path[strlen(path) - 1] == '/')
+    {
+        output_path = (char *)malloc(sizeof(char) * (strlen(path) + strlen("output") + 1));
+        strcpy(output_path, path);
+        strcat(output_path, "output");
+    }
+    else
+    {
+        output_path = (char *)malloc(sizeof(char) * (strlen(path) + strlen("/output") + 1));
+        strcpy(output_path, path);
+        strcat(output_path, "/output");
+    }
+
+    if (check_if_dir_exists(output_path) == 0)
+    {
+        if (mkdir(output_path, 0777) == -1)
+        {
+            fprintf(stderr, "Error while opening the folder: %s.\n", path);
+            free(output_path);
+            free(path);
+            exit(6);
+        }
+    }
+
+    return output_path;
+}
+
+struct png_names get_all_images(char *path)
+{
+    DIR *dir_descriptor;
+    struct dirent *dir;
+    struct png_names png_info;
+
+    dir_descriptor = opendir(path);
+    png_info.current_index = 0;
+    
+    // Gasim cate fisiere de tip PNG sunt
+    if (dir_descriptor != NULL)
+    {
+        png_info.len = 0;
+
+        while ((dir = readdir(dir_descriptor)) != NULL)
+        {
+            // Alegem doar fisierele regulare, doar acelea pot reprezenta potentiale poze
+            if (dir->d_type == DT_REG && is_png(dir->d_name))
+            {
+                png_info.len++;
+            }
+        }
+
+        //fprintf(stderr,"%d\n", total_images);
+        closedir(dir_descriptor);
+    }
+    else
+    {
+        fprintf(stderr, "Could not open path: %s\n", path);
+        exit(1);
+    }
+
+    // Salvam numele PNG-urilor in lista de nume de poze
+    dir_descriptor = opendir(path);
+    png_info.names = (char **)malloc(sizeof(char*) * png_info.len);    
+
+    if (dir_descriptor != NULL)
+    {
+        png_info.len = 0;
+
+        while ((dir = readdir(dir_descriptor)) != NULL)
+        {
+            // Alegem doar fisierele regulare, doar acelea pot reprezenta potentiale poze
+            if (dir->d_type == DT_REG && is_png(dir->d_name))
+            {
+                png_info.names[png_info.len] = (char *)malloc(sizeof(char) * (strlen(dir->d_name + 1)));
+                strcpy(png_info.names[png_info.len], dir->d_name);
+                png_info.len++;
+            }
+        }
+
+        //fprintf(stderr,"%d\n", total_images);
+        closedir(dir_descriptor);
+    }
+    else
+    {
+        fprintf(stderr, "Could not open path: %s\n", path);
+        exit(1);
+    }
+
+    return png_info;
 }
 
 int main(int argc, char* argv[])
@@ -476,6 +598,7 @@ int main(int argc, char* argv[])
     // DE PORNIT THREAD PENTRU PROCESARE COADA DE MESAJE
 
     // Faptul ca exista acele : dupa litere, gen c: sau f: sau k: anunta ca urmeaza un argument dupa
+    // NU IN SWITCH TREBUIE CREATE THREAD_URILE, CA NU ASIGURA NIMIC ORDINEA IN CARE SE EXECUTA CASE-URILE
     while ((option = getopt_long(argc, argv, "p:", long_options, &option_index)) != -1)
     {
         switch (option)
@@ -484,9 +607,9 @@ int main(int argc, char* argv[])
             parameters.socket_fd = socket_fd;
             parameters.path = (char *)malloc(strlen(optarg) * sizeof(char) + 1);
             strcpy(parameters.path, optarg);
+            parameters.output_path = create_output_dir(parameters.path);    // Facem folderul unde vom pune pozele prelucrate
+            parameters.png_info = get_all_images(parameters.path);
 
-            pthread_create(&requests_manager_thread, NULL, manage_requests, &socket_fd);
-            pthread_create(&sender_thread, NULL, find_images, &parameters);
             break;
 
         default:
@@ -495,6 +618,9 @@ int main(int argc, char* argv[])
             exit(2);
         };
     }
+
+    pthread_create(&requests_manager_thread, NULL, manage_requests, &parameters);
+    pthread_create(&sender_thread, NULL, find_images, &parameters);
 
     pthread_join(sender_thread, NULL);
     //pthread_join(requests_manager_thread, NULL);
@@ -507,10 +633,12 @@ int main(int argc, char* argv[])
     // close the socket
     close(socket_fd);
     free(parameters.path);
+    free(parameters.output_path);
     pthread_mutex_destroy(&mutex_buffer);
     sem_destroy(&sem_empty);
     sem_destroy(&sem_full);
     sem_destroy(&sem_send_package);
+    sem_destroy(&sem_terminate_processes);
 
     return 0;
 }
