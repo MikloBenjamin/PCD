@@ -118,7 +118,7 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
     // fread() intoarce numarul de bucati citite (adica ce punem in al treilea argument), in cazul in care intoarce 0 inseamna ca am ajuns la capat
     // fiindca nu se mai citeste nimic
     // Fiecare bucata citita e trimisa serverului
-    FILE *tmp = fopen("/home/mihai/Desktop/output/bb.png", "wb");
+    FILE *tmp = fopen("/home/beni/proiectimages/output/bb.png", "wb");
     while((bytes_read = fread(buffer + HEADER_SIZE, sizeof(char), effective_msg_length, img_descriptor)) == effective_msg_length)
     {
         fprintf(stderr,"Send pack 3\n");
@@ -158,6 +158,7 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
         fprintf(stderr, "%ld\n", ftell(img_descriptor));
         sem_wait(&sem_send_package);
 
+
         if (send(socket_fd, buffer, bytes_read + HEADER_SIZE, 0) == -1)
         {
             fclose(tmp);
@@ -173,6 +174,7 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
     fclose(tmp);
     free(image_path);
     fclose(img_descriptor);
+    fprintf(stderr, "Leaving read and write\n");
 }
 
 int is_png(char *name)
@@ -278,17 +280,17 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
     int current_package;
 
     if (request.message_type)
-        fprintf(stderr, "Msg: %d\n", request.message_type);
+        fprintf(stderr, "Msg whatver: %d\n", request.message_type);
 
+    char processed_img_path[PATH_MAX];
     switch (request.message_type)
     {
     case 1:         // Confirmare de primire pachet
         sem_post(&sem_send_package);
         break;
 
-    case 2:         // Pachet cu informatii despre poza care urmeaza sa fie trimisa
-        char processed_img_path[PATH_MAX];
-
+    case 2:
+        // Pachet cu informatii despre poza care urmeaza sa fie trimisa
         // Contruim calea spre locul unde va fi pusa poza noua
         //fprintf(stderr, "%s", png_info->names[png_info->current_index]);
         if (png_info->current_index < png_info->len)
