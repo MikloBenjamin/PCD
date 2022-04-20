@@ -100,7 +100,6 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
     buffer[2] = (size >> 8) & 0xff;   // Izolam al doilea byte din bytes_read
 
     sem_wait(&sem_send_package);
-    fprintf(stderr,"Send pack 2 %d\n", socket_fd);
     // DACA PUNEM SI CALEA SA ACTUALIZAM SI IN WRITE CU PATH_LENGTH + HEADER_SIZE
     if (send(socket_fd, buffer, MAX_SIZE, 0) == -1)
     {
@@ -118,27 +117,17 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
     // fread() intoarce numarul de bucati citite (adica ce punem in al treilea argument), in cazul in care intoarce 0 inseamna ca am ajuns la capat
     // fiindca nu se mai citeste nimic
     // Fiecare bucata citita e trimisa serverului
-    FILE *tmp = fopen("/home/beni/proiectimages/output/bb.png", "wb");
     while((bytes_read = fread(buffer + HEADER_SIZE, sizeof(char), effective_msg_length, img_descriptor)) == effective_msg_length)
     {
-        fprintf(stderr,"Send pack 3\n");
         buffer[0] = 3;                          // Tip de mesaj: trimitere pachet de date
         buffer[1] = bytes_read & 0xff;          // Izolam primul byte din bytes_read
         buffer[2] = (bytes_read >> 8) & 0xff;   // Izolam al doilea byte din bytes_read
-
-        fprintf(stderr, "prim %ld\n", bytes_read);
-
-        fwrite(buffer + HEADER_SIZE, sizeof(char), bytes_read, tmp);    // scrierea de verificare, se sterge dupa
-
-        fprintf(stderr, "%ld\n", ftell(img_descriptor));
 
         // Asteptam confirmarea de la server ca a primit pachetul
         sem_wait(&sem_send_package);
 
         if (send(socket_fd, buffer, bytes_read + HEADER_SIZE, 0) == -1)
         {
-            fclose(tmp);
-
             fprintf(stderr, "Error while sending the data.\n");
             free(image_path);
             fclose(img_descriptor);
@@ -149,20 +138,14 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
 
     if (feof(img_descriptor))
     {
-        fwrite(buffer + HEADER_SIZE, sizeof(char), bytes_read, tmp);
-
         buffer[0] = 3;                          // Tip de mesaj: trimitere pachet de date
         buffer[1] = bytes_read & 0xff;          // Izolam primul byte din bytes_read
         buffer[2] = (bytes_read >> 8) & 0xff;   // Izolam al doilea byte din bytes_read
 
-        fprintf(stderr, "%ld\n", ftell(img_descriptor));
         sem_wait(&sem_send_package);
-
 
         if (send(socket_fd, buffer, bytes_read + HEADER_SIZE, 0) == -1)
         {
-            fclose(tmp);
-
             fprintf(stderr, "Error while sending the data.\n");
             free(image_path);
             fclose(img_descriptor);
@@ -171,10 +154,8 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
         }
     }
 
-    fclose(tmp);
     free(image_path);
     fclose(img_descriptor);
-    fprintf(stderr, "Leaving read and write\n");
 }
 
 int is_png(char *name)
@@ -212,7 +193,6 @@ void set_number_of_total_images(char *path)
         total_images--;
         pthread_mutex_unlock(&mutex_buffer);
 
-        //fprintf(stderr,"%d\n", total_images);
         closedir(dir_descriptor);
     }
     else
@@ -224,21 +204,16 @@ void set_number_of_total_images(char *path)
 
 void *find_images(void *args)
 {
-    //int socket_fd;
     struct thread_parameters *parameters = (struct thread_parameters *)args;
-
-    printf("Thread: %s\n", parameters->path);
 
     // Initializam numarul total de poze - 1
     set_number_of_total_images(parameters->path);
 
     for (int i = 0; i < parameters->png_info.len; i++)
     {
-        fprintf(stderr,"%s", parameters->png_info.names[i]);
+        fprintf(stdout,"Sending image: %s\n", parameters->png_info.names[i]);
         read_and_send_image(parameters->path, parameters->png_info.names[i], parameters->socket_fd);
     }
-
-    pthread_exit(0);
 }
 
 int establish_connection()
@@ -250,18 +225,18 @@ int establish_connection()
     socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_fd == -1)
     {
-        printf("Socket creation has failed.\n");
+        printf("The socket creation has failed.\n");
         exit(2);
     }
 
     bzero(&server_addr, sizeof(server_addr));
 
-    // assign IP, PORT
+    // Asignam portul si IP-ul
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = inet_addr(ADDR);
     server_addr.sin_port = htons(PORT);
 
-    // connect the client socket to server socket
+    // Conectam socket-ul clientului la socket-ul serverului
     if (connect(socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) != 0)
     {
         printf("The connection with the server has failed.\n");
@@ -279,22 +254,19 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
     int total_packages;
     int current_package;
 
-    if (request.message_type)
-        fprintf(stderr, "Msg whatver: %d\n", request.message_type);
-
-    char processed_img_path[PATH_MAX];
     switch (request.message_type)
     {
     case 1:         // Confirmare de primire pachet
         sem_post(&sem_send_package);
         break;
 
-    case 2:
-        // Pachet cu informatii despre poza care urmeaza sa fie trimisa
+    case 2:         // Pachet cu informatii despre poza care urmeaza sa fie trimisa
+        char processed_img_path[PATH_MAX];
+
         // Contruim calea spre locul unde va fi pusa poza noua
-        //fprintf(stderr, "%s", png_info->names[png_info->current_index]);
         if (png_info->current_index < png_info->len)
         {
+            fprintf(stdout, "Writing image: %s\n", png_info->names[png_info->current_index]);
             strcpy(processed_img_path, output_dir_path);
             strcat(processed_img_path, "/");
             strcat(processed_img_path, png_info->names[png_info->current_index++]);
@@ -304,9 +276,7 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
             if (!processed_img_handler)
             {
                 fprintf(stderr, "Could not open image for reading: \n");
-                //free(image_path); 
                 close(socket_fd);
-                //free(request.message); DE DECOMENTAT DOAR DACA PUNEM SI NUMELE IN PACHET
                 exit(2);
             }
 
@@ -319,7 +289,6 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
             if (send(socket_fd, buffer, 1, 0) == -1)
             {
                 fprintf(stderr, "Error while sending the data.\n");
-                //free(request.message); DE DECOMENTAT DOAR DACA PUNEM SI NUMELE IN PACHET
                 fclose(processed_img_handler);
                 close(socket_fd);
                 exit(4);
@@ -401,11 +370,12 @@ void *manage_requests(void *args)
         sem_wait(&sem_full);   // Daca nu avem locuri libere in coada, asteptam pana se fac
         pthread_mutex_lock(&mutex_buffer);
         request = requests[0];
-        //printf("%d\n", length_of_requests);
+
         for (int i = 0; i < length_of_requests; i++)
         {
             requests[i] = requests[i + 1];
         }
+
         length_of_requests--;
         pthread_mutex_unlock(&mutex_buffer);
         sem_post(&sem_empty);    // Cand apare un loc liber, atunci incrementam cate locuri pline sunt, ptr ca am adaugat un element
@@ -446,11 +416,7 @@ void *read_requests(void *args)
         //printf("%d\n", length_of_requests - 1);
         pthread_mutex_unlock(&mutex_buffer);
         sem_post(&sem_full);    // Cand apare un loc liber, atunci incrementam cate locuri pline sunt, ptr ca am adaugat un element
-
-        //process_request(request, socket_fd);   // Trimitem mesajul la procesat
     }
-
-    pthread_exit(0);
 }
 
 int check_if_dir_exists(char *path)
@@ -528,7 +494,6 @@ struct png_names get_all_images(char *path)
             }
         }
 
-        //fprintf(stderr,"%d\n", total_images);
         closedir(dir_descriptor);
     }
     else
@@ -556,7 +521,6 @@ struct png_names get_all_images(char *path)
             }
         }
 
-        //fprintf(stderr,"%d\n", total_images);
         closedir(dir_descriptor);
     }
     else
@@ -597,10 +561,8 @@ int main(int argc, char* argv[])
     pthread_create(&reader_thread, NULL, read_requests, &socket_fd);
 
     // DE PUS IF CARE VERIFICA NUMARUL DE ARGUMENTE
-    // DE PORNIT THREAD PENTRU PROCESARE COADA DE MESAJE
 
     // Faptul ca exista acele : dupa litere, gen c: sau f: sau k: anunta ca urmeaza un argument dupa
-    // NU IN SWITCH TREBUIE CREATE THREAD_URILE, CA NU ASIGURA NIMIC ORDINEA IN CARE SE EXECUTA CASE-URILE
     while ((option = getopt_long(argc, argv, "p:", long_options, &option_index)) != -1)
     {
         switch (option)
@@ -625,17 +587,22 @@ int main(int argc, char* argv[])
     pthread_create(&sender_thread, NULL, find_images, &parameters);
 
     pthread_join(sender_thread, NULL);
-    //pthread_join(requests_manager_thread, NULL);
-    //pthread_join(reader_thread, NULL);
 
     sem_wait(&sem_terminate_processes);
     pthread_cancel(requests_manager_thread);
     pthread_cancel(reader_thread);
 
-    // close the socket
     close(socket_fd);
     free(parameters.path);
     free(parameters.output_path);
+
+    for (int i = 0; i < parameters.png_info.len; i++)
+    {
+        free(parameters.png_info.names[i]);
+    }
+
+    free(parameters.png_info.names);
+
     pthread_mutex_destroy(&mutex_buffer);
     sem_destroy(&sem_empty);
     sem_destroy(&sem_full);
