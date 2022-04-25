@@ -3,6 +3,5 @@
 !*.*
 *.o
 .vscode/
-files/
 test.*
 !makefile

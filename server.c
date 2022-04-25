@@ -59,6 +59,8 @@ void* wait_admin(void* param);
 void* wait_for_clients(void* server);
 void* serve_client(void* conn);
 
+int create_files_directory_as_needed();
+
 void* run_server(void* port)
 {
     int PORT = *(int*)port;
@@ -110,6 +112,12 @@ void* run_server(void* port)
         printf("Server is listening on port: %d!\n", PORT);
     }
     sem_init(&end_server, 0, 0);
+
+    if (create_files_directory_as_needed() < 0)
+    {
+        fprintf(stderr, "Error creating 'files' directory\n");
+        exit(1);
+    }
 
     pthread_create(&wait_clients, NULL, wait_for_clients, &server_socket);
     pthread_create(&wait_admins, NULL, wait_admin, NULL);
@@ -227,8 +235,6 @@ void* wait_admin(void* param)
 void* wait_for_clients(void* server)
 {
     ServerSocket *server_socket = (ServerSocket*)server;
-    fprintf(stderr, "socket_id: %d , socket_address:\n",
-            server_socket->socket_id);
     fprintf(stderr, "Starting wait for clients...\n");
 
     int len = sizeof(server_socket->socket_address);
@@ -387,7 +393,7 @@ void* serve_client(void* conn)
     {
         int confirmation = 0;
         request.message_type = buffer[0];
-        fprintf(stderr, "Message type: %d , buffer[0] - 48 = %d\n", request.message_type, buffer[0] - 48);
+        fprintf(stderr, "Message type: %d\n", request.message_type);
         switch (request.message_type){
             case CONFIRMATION:
                 fprintf(stderr, "Confirmation received\n");
@@ -442,7 +448,6 @@ void* serve_client(void* conn)
             {
                 fclose(image);
                 process(image_path);
-                fprintf(stderr, "Hello de 2 ori?\n");
                 send_back_image(connfd, image_path);
                 free(image_path);
             }
@@ -462,4 +467,22 @@ void* serve_client(void* conn)
 
     fprintf(stderr, "leaving client\n");
     close(connfd);
+}
+
+int create_files_directory_as_needed()
+{
+    DIR* dir = opendir("files");
+    if (!dir)
+    {
+        if (mkdir("files", S_IRWXU | S_IRWXG | S_IRWXO) == -1)
+        {
+            fprintf(stderr, "Error: %s\n", strerror(errno));
+            return -1;
+        }
+        else
+        {
+            fprintf(stdout, "'files/' successfully created\n");
+        }
+    }
+    return 0;
 }

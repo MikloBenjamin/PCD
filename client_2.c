@@ -254,6 +254,7 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
     int total_packages;
     int current_package;
 
+    char processed_img_path[PATH_MAX];
     switch (request.message_type)
     {
     case 1:         // Confirmare de primire pachet
@@ -261,8 +262,6 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
         break;
 
     case 2:         // Pachet cu informatii despre poza care urmeaza sa fie trimisa
-        char processed_img_path[PATH_MAX];
-
         // Contruim calea spre locul unde va fi pusa poza noua
         if (png_info->current_index < png_info->len)
         {
