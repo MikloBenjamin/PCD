@@ -106,9 +106,11 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
         fprintf(stderr, "Error while sending the data.\n");
         free(image_path);
         fclose(img_descriptor);
+        fprintf(stderr, "Socket closed\n");
         close(socket_fd);
         exit(4);
     }
+    fprintf(stderr, "Package: %d\n", buffer[0]);
 
     /*---------------------------------------------------------------------------------------
     CITIREA SI TRIMITEREA PACHETELOR CU POZA EFECTIVA
@@ -131,9 +133,11 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
             fprintf(stderr, "Error while sending the data.\n");
             free(image_path);
             fclose(img_descriptor);
+            fprintf(stderr, "Socket closed\n");
             close(socket_fd);
             exit(4);
         }
+        fprintf(stderr, "Package: %d\n", buffer[0]);
     }
 
     if (feof(img_descriptor))
@@ -149,9 +153,11 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
             fprintf(stderr, "Error while sending the data.\n");
             free(image_path);
             fclose(img_descriptor);
+            fprintf(stderr, "Socket closed\n");
             close(socket_fd);
             exit(4);
         }
+        fprintf(stderr, "Package: %d", buffer[0]);
     }
 
     free(image_path);
@@ -255,6 +261,7 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
     int current_package;
 
     char processed_img_path[PATH_MAX];
+
     switch (request.message_type)
     {
     case 1:         // Confirmare de primire pachet
@@ -275,6 +282,7 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
             if (!processed_img_handler)
             {
                 fprintf(stderr, "Could not open image for reading: \n");
+                fprintf(stderr, "Socket closed\n");
                 close(socket_fd);
                 exit(2);
             }
@@ -284,14 +292,16 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
 
             // Trimitere confirmare de primire pachet
             buffer[0] = 1;
-
+            fprintf(stderr, "Sock %d\n", socket_fd);
             if (send(socket_fd, buffer, 1, 0) == -1)
             {
                 fprintf(stderr, "Error while sending the data.\n");
                 fclose(processed_img_handler);
+                fprintf(stderr, "Socket closed\n");
                 close(socket_fd);
                 exit(4);
             }
+            fprintf(stderr, "Package: %d", buffer[0]);
         }
         else
         {
@@ -337,9 +347,11 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
                     fprintf(stderr, "Error while sending the data.\n");
                     free(request.message);
                     fclose(processed_img_handler);
+                    fprintf(stderr, "Socket closed\n");
                     close(socket_fd);
                     exit(4);
                 }
+                fprintf(stderr, "Package: %d", buffer[0]);
             }
         }
 
@@ -364,6 +376,8 @@ void *manage_requests(void *args)
     Request request;
     struct thread_parameters *parameters = (struct thread_parameters *)args;
 
+    int cont = 0;
+
     while (1)
     {
         sem_wait(&sem_full);   // Daca nu avem locuri libere in coada, asteptam pana se fac
@@ -379,6 +393,8 @@ void *manage_requests(void *args)
         pthread_mutex_unlock(&mutex_buffer);
         sem_post(&sem_empty);    // Cand apare un loc liber, atunci incrementam cate locuri pline sunt, ptr ca am adaugat un element
 
+        cont++;
+       // fprintf(stderr, "MANAGE REQUEST: %d\n", cont);
         process_request(request, parameters->socket_fd, parameters->output_path, &(parameters->png_info));   // Trimitem mesajul la procesat
     }
 }
@@ -389,32 +405,45 @@ void *read_requests(void *args)
     int socket_fd = *((int *)args);
     int effective_msg_size = MAX_SIZE - HEADER_SIZE;
 
+    int cont = 0;
+
     while (1)
     {
         Request request;
 
-        if (recv(socket_fd, buffer, MAX_SIZE, 0) == -1)
+        bzero(buffer, MAX_SIZE);
+        //fprintf(stderr, "MSG TYPE: %d\n", buffer[0]);
+        if (recv(socket_fd, buffer, MAX_SIZE, 0) < 0)
         {
-            fprintf(stderr, "Error while reading from socket: %d", errno);
-            perror(NULL);
+            //fprintf(stderr, "Error while reading from socket: %d", errno);
+            //perror(NULL);
         }
-
-        request.message_type = buffer[0];               // Dam X
-        request.length = 0xff & buffer[1];                 // Primul byte din Y
-        request.length |= (0xff & buffer[2]) << 8;       // Al doilea byte din Y
-
-        if (request.message_type == 3)      // Doar mesajele de tip 3 au un Z cu continut
+        else 
         {
-            request.message = (char*)malloc(sizeof(char) * request.length);     // Dam Z
-            memcpy(request.message, buffer + HEADER_SIZE, request.length);
-        }
+            cont++;
+            //fprintf(stderr, "CONT READ REQUEST: %d\n", cont);
 
-        sem_wait(&sem_empty);   // Daca nu avem locuri libere in coada, asteptam pana se fac
-        pthread_mutex_lock(&mutex_buffer);
-        requests[length_of_requests++] = request;
-        //printf("%d\n", length_of_requests - 1);
-        pthread_mutex_unlock(&mutex_buffer);
-        sem_post(&sem_full);    // Cand apare un loc liber, atunci incrementam cate locuri pline sunt, ptr ca am adaugat un element
+            request.message_type = buffer[0];               // Dam X
+            request.length = 0xff & buffer[1];                 // Primul byte din Y
+            request.length |= (0xff & buffer[2]) << 8;       // Al doilea byte din Y
+
+          //  fprintf(stderr, "MSG TYPE: %d\n", request.message_type);
+
+
+
+            if (request.message_type == 3)      // Doar mesajele de tip 3 au un Z cu continut
+            {
+                request.message = (char*)malloc(sizeof(char) * request.length);     // Dam Z
+                memcpy(request.message, buffer + HEADER_SIZE, request.length);
+            }
+
+            sem_wait(&sem_empty);   // Daca nu avem locuri libere in coada, asteptam pana se fac
+            pthread_mutex_lock(&mutex_buffer);
+            requests[length_of_requests++] = request;
+            //printf("%d\n", length_of_requests - 1);
+            pthread_mutex_unlock(&mutex_buffer);
+            sem_post(&sem_full);    // Cand apare un loc liber, atunci incrementam cate locuri pline sunt, ptr ca am adaugat un element
+        }
     }
 }
 
@@ -561,7 +590,6 @@ int main(int argc, char* argv[])
 
     // DE PUS IF CARE VERIFICA NUMARUL DE ARGUMENTE
 
-    // Faptul ca exista acele : dupa litere, gen c: sau f: sau k: anunta ca urmeaza un argument dupa
     while ((option = getopt_long(argc, argv, "p:", long_options, &option_index)) != -1)
     {
         switch (option)
@@ -577,7 +605,6 @@ int main(int argc, char* argv[])
 
         default:
             // De pus usage
-            // printf("Usage: --celsius <double value> and/or --fahrenheit <double value> and/or --kelvin <double value>.\n");
             exit(2);
         };
     }
@@ -592,6 +619,7 @@ int main(int argc, char* argv[])
     pthread_cancel(reader_thread);
 
     close(socket_fd);
+    fprintf(stderr, "Socket closed\n");
     free(parameters.path);
     free(parameters.output_path);
 
