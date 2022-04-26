@@ -225,7 +225,7 @@ void *find_images(void *args)
     // Initializam numarul total de poze - 1
     set_number_of_total_images(parameters->path);
 
-    buffer[0] = 0;          // Anunta pachet cu nr de pachete
+    buffer[0] = 0;                                      // Anunta pachet cu nr de pachete
     buffer[1] = parameters->png_info.len & 0xff;        // Izolam primul byte din bytes_read
     buffer[2] = parameters->png_info.len >> 8 & 0xff;   // Izolam al doilea byte din bytes_read
     buffer[3] = parameters->option & 0xff;              // Izolam primul byte din bytes_read
@@ -238,7 +238,7 @@ void *find_images(void *args)
         exit(4);
     }
 
-    fprintf(stderr, "TRIMIS\n");
+    fprintf(stderr, "TRIMIS: %d\n", parameters->png_info.len);
 
     for (int i = 0; i < parameters->png_info.len; i++)
     {
