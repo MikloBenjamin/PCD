@@ -26,6 +26,14 @@ sem_t sem_full;                 // Semafor care tine evidenta cate locuri ocupat
 sem_t sem_send_package;         // Semafor care asteapta dupa confirmarea de primire de pachet
 sem_t sem_terminate_processes;  // Semafor care se face 1 atunci cand toate pozele au fost prelucrate, adica cand total_images == 0
 
+enum OPTIONS 
+{
+    NEGATIV,
+    SEPIA,
+    BLUR,
+    BLACK_AND_WHITE
+};
+
 struct png_names
 {
     char **names;
@@ -40,6 +48,7 @@ struct thread_parameters
     char *output_path;
     int socket_fd;
     struct png_names png_info;
+    enum OPTIONS option;
 };
 
 typedef struct Request
@@ -110,7 +119,7 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
         close(socket_fd);
         exit(4);
     }
-    fprintf(stderr, "Package: %d\n", buffer[0]);
+    //fprintf(stderr, "Package: %d\n", buffer[0]);
 
     /*---------------------------------------------------------------------------------------
     CITIREA SI TRIMITEREA PACHETELOR CU POZA EFECTIVA
@@ -137,7 +146,7 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
             close(socket_fd);
             exit(4);
         }
-        fprintf(stderr, "Package: %d\n", buffer[0]);
+        //fprintf(stderr, "Package: %d\n", buffer[0]);
     }
 
     if (feof(img_descriptor))
@@ -157,7 +166,7 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
             close(socket_fd);
             exit(4);
         }
-        fprintf(stderr, "Package: %d", buffer[0]);
+        //fprintf(stderr, "Package: %d", buffer[0]);
     }
 
     free(image_path);
@@ -211,9 +220,25 @@ void set_number_of_total_images(char *path)
 void *find_images(void *args)
 {
     struct thread_parameters *parameters = (struct thread_parameters *)args;
+    char buffer[MAX_SIZE];
 
     // Initializam numarul total de poze - 1
     set_number_of_total_images(parameters->path);
+
+    buffer[0] = 0;          // Anunta pachet cu nr de pachete
+    buffer[1] = parameters->png_info.len & 0xff;        // Izolam primul byte din bytes_read
+    buffer[2] = parameters->png_info.len >> 8 & 0xff;   // Izolam al doilea byte din bytes_read
+    buffer[3] = parameters->option & 0xff;              // Izolam primul byte din bytes_read
+    buffer[4] = parameters->option >> 8 & 0xff;         // Izolam al doilea byte din bytes_read
+
+    if (send(parameters->socket_fd, buffer, MAX_SIZE, 0) == -1)
+    {
+        fprintf(stderr, "Error while sending the data.\n");
+        close(parameters->socket_fd);
+        exit(4);
+    }
+
+    fprintf(stderr, "TRIMIS\n");
 
     for (int i = 0; i < parameters->png_info.len; i++)
     {
@@ -292,7 +317,7 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
 
             // Trimitere confirmare de primire pachet
             buffer[0] = 1;
-            fprintf(stderr, "Sock %d\n", socket_fd);
+            //fprintf(stderr, "Sock %d\n", socket_fd);
             if (send(socket_fd, buffer, 1, 0) == -1)
             {
                 fprintf(stderr, "Error while sending the data.\n");
@@ -301,7 +326,7 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
                 close(socket_fd);
                 exit(4);
             }
-            fprintf(stderr, "Package: %d", buffer[0]);
+            //fprintf(stderr, "Package: %d", buffer[0]);
         }
         else
         {
@@ -351,7 +376,7 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
                     close(socket_fd);
                     exit(4);
                 }
-                fprintf(stderr, "Package: %d", buffer[0]);
+                //fprintf(stderr, "Package: %d", buffer[0]);
             }
         }
 
@@ -376,8 +401,6 @@ void *manage_requests(void *args)
     Request request;
     struct thread_parameters *parameters = (struct thread_parameters *)args;
 
-    int cont = 0;
-
     while (1)
     {
         sem_wait(&sem_full);   // Daca nu avem locuri libere in coada, asteptam pana se fac
@@ -393,7 +416,6 @@ void *manage_requests(void *args)
         pthread_mutex_unlock(&mutex_buffer);
         sem_post(&sem_empty);    // Cand apare un loc liber, atunci incrementam cate locuri pline sunt, ptr ca am adaugat un element
 
-        cont++;
        // fprintf(stderr, "MANAGE REQUEST: %d\n", cont);
         process_request(request, parameters->socket_fd, parameters->output_path, &(parameters->png_info));   // Trimitem mesajul la procesat
     }
@@ -405,8 +427,6 @@ void *read_requests(void *args)
     int socket_fd = *((int *)args);
     int effective_msg_size = MAX_SIZE - HEADER_SIZE;
 
-    int cont = 0;
-
     while (1)
     {
         Request request;
@@ -415,12 +435,11 @@ void *read_requests(void *args)
         //fprintf(stderr, "MSG TYPE: %d\n", buffer[0]);
         if (recv(socket_fd, buffer, MAX_SIZE, 0) < 0)
         {
-            //fprintf(stderr, "Error while reading from socket: %d", errno);
-            //perror(NULL);
+            fprintf(stderr, "Error while reading from socket: %d", errno);
+            perror(NULL);
         }
         else 
         {
-            cont++;
             //fprintf(stderr, "CONT READ REQUEST: %d\n", cont);
 
             request.message_type = buffer[0];               // Dam X
@@ -428,8 +447,6 @@ void *read_requests(void *args)
             request.length |= (0xff & buffer[2]) << 8;       // Al doilea byte din Y
 
           //  fprintf(stderr, "MSG TYPE: %d\n", request.message_type);
-
-
 
             if (request.message_type == 3)      // Doar mesajele de tip 3 au un Z cu continut
             {
@@ -565,12 +582,19 @@ int main(int argc, char* argv[])
     static struct option long_options[] =
     {
         {"path", required_argument, 0, 'p'},
+        {"negative", no_argument, 0, 'n'},
+        {"sepia", no_argument, 0, 's'},
+        {"blur", no_argument, 0, 'b'},
+        {"blackNwhite", no_argument, 0, 'w'},
         {0, 0, 0, 0}    // Pe ultimul rand din optiuni trebuie sa apara neaparat {0, 0, 0, 0}
     };
 
     int option;
     int option_index = 0;
     int socket_fd;
+
+    int has_folder_path = 0;
+    int has_an_option = 0;
 
     pthread_t sender_thread;                // Trimite imaginile serverului
     pthread_t reader_thread;                // Citeste mesajele care vin de la server
@@ -588,9 +612,7 @@ int main(int argc, char* argv[])
 
     pthread_create(&reader_thread, NULL, read_requests, &socket_fd);
 
-    // DE PUS IF CARE VERIFICA NUMARUL DE ARGUMENTE
-
-    while ((option = getopt_long(argc, argv, "p:", long_options, &option_index)) != -1)
+    while ((option = getopt_long(argc, argv, "p:nsbw", long_options, &option_index)) != -1)
     {
         switch (option)
         {
@@ -600,13 +622,40 @@ int main(int argc, char* argv[])
             strcpy(parameters.path, optarg);
             parameters.output_path = create_output_dir(parameters.path);    // Facem folderul unde vom pune pozele prelucrate
             parameters.png_info = get_all_images(parameters.path);
+            has_folder_path = 1;
 
+            break;
+
+        case 'n':
+            parameters.option = NEGATIV;
+            has_an_option = 1;
+            break;
+
+        case 's':
+            parameters.option = SEPIA;
+            has_an_option = 1;
+            break;
+
+        case 'b':
+            parameters.option = BLUR;
+            has_an_option = 1;
+            break;
+
+        case 'w':
+            parameters.option = BLACK_AND_WHITE;
+            has_an_option = 1;
             break;
 
         default:
             // De pus usage
             exit(2);
         };
+    }
+
+    if (argc != 4 || has_an_option == 0 || has_folder_path == 0)
+    {
+        fprintf(stderr, "Usage: ./client_2 -p path_to_images_folder -n/-s/-b/-w\n");
+        exit(1);
     }
 
     pthread_create(&requests_manager_thread, NULL, manage_requests, &parameters);
