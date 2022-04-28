@@ -172,7 +172,7 @@ void* read_admin(void* conn)
         }
         bzero(buff, sizeof(buff));
     }
-    fprintf(stderr, "Socket closed\n");
+    //fprintf(stderr, "Socket closed\n");
     close(connfd);
     printf("Admin thread ended\n");
 }
@@ -371,17 +371,17 @@ void send_back_image(int connfd, char* image_path)
     buffer[1] = size & 0xff;
     buffer[2] = (size >> 8) & 0xff;
 
-    fprintf(stderr,"Send pack %d\n", buffer[0]);
+    //fprintf(stderr,"Send pack %d\n", buffer[0]);
     if (send(connfd, buffer, MAX_SIZE, 0) == -1)
     {
         fprintf(stderr, "Error while sending the data.\n");
         fclose(image);
-        fprintf(stderr, "Socket closed\n");
+        //fprintf(stderr, "Socket closed\n");
         close(connfd);
         exit(1);
     }
 
-    fprintf(stderr, "Error while reading from socket: %d\n", errno);
+    //fprintf(stderr, "Error while reading from socket: %d\n", errno);
     perror(NULL);
 
     bzero(buffer, MAX_SIZE);
@@ -389,12 +389,12 @@ void send_back_image(int connfd, char* image_path)
     {
         fprintf(stderr, "READ CONFIRMATION ERROR\n");
         fclose(image);
-        fprintf(stderr, "Socket closed\n");
+        //fprintf(stderr, "Socket closed\n");
         close(connfd);
         exit(1);
     }
 
-    fprintf(stderr, "Error while reading from socket: %d\n", errno);
+    //fprintf(stderr, "Error while reading from socket: %d\n", errno);
     perror(NULL);
 
     
@@ -402,40 +402,40 @@ void send_back_image(int connfd, char* image_path)
     {
         fprintf(stderr, "Read something else, instead of CONFIRMATION");
         fclose(image);
-        fprintf(stderr, "Socket closed\n");
+        //fprintf(stderr, "Socket closed\n");
         close(connfd);
         exit(1);
     }
     bzero(buffer, MAX_SIZE);
 
-    fprintf(stderr, "Sock: %d\n", connfd);
+    //fprintf(stderr, "Sock: %d\n", connfd);
 
     while((bytes_read = fread(buffer + HEADER_SIZE, sizeof(char), effective_msg_length, image)) > 0)
     {
         //fprintf(stderr,"Send pack 3\n");
-        fprintf(stderr,"SCCCCCCc\n");
+        //fprintf(stderr,"SCCCCCCc\n");
         buffer[0] = 3;
         buffer[1] = bytes_read & 0xff;
         buffer[2] = (bytes_read >> 8) & 0xff;
 
         //fprintf(stderr, "%ld\n", ftell(image));
-        fprintf(stderr,"Send pack %d\n", buffer[0]);
+        //fprintf(stderr,"Send pack %d\n", buffer[0]);
         if (send(connfd, buffer, bytes_read + HEADER_SIZE, 0) == -1)
         {
             fprintf(stderr, "Error while sending the data.\n");
-            fprintf(stderr, "FREE: 1\n");
+            //fprintf(stderr, "FREE: 1\n");
             free(image_path);
             fclose(image);
-            fprintf(stderr, "Socket closed\n");
+            //fprintf(stderr, "Socket closed\n");
             close(connfd);
             exit(1);
         }
 
-        if ((bytes_read = (connfd, buffer, MAX_SIZE, 0)) < 0)
+        if ((bytes_read = recv(connfd, buffer, MAX_SIZE, 0)) < 0)
         {
             fprintf(stderr, "READ CONFIRMATION ERROR\n");
             fclose(image);
-            fprintf(stderr, "Socket closed\n");
+            //fprintf(stderr, "Socket closed\n");
             close(connfd);
             exit(1);
         }
@@ -444,13 +444,13 @@ void send_back_image(int connfd, char* image_path)
         {
             fprintf(stderr, "Read something else, instead of CONFIRMATION");
             fclose(image);
-            fprintf(stderr, "Socket closed\n");
+            //fprintf(stderr, "Socket closed\n");
             close(connfd);
             exit(1);
         }
         bzero(buffer, MAX_SIZE);
     }
-    fprintf(stderr, "Sock: %d\n", connfd);
+    //fprintf(stderr, "Sock: %d\n", connfd);
     if (bytes_read < 0)
     {
             fprintf(stderr, "Error while reading from socket: %d", errno);
@@ -470,8 +470,6 @@ void* serve_client(void* conn)
     char *image_path = (char *) malloc (128);
     FILE *image;
 
-
-    // Request request: type, size, data
     int number_of_packets = 0;
     Request request;
     request.message = NULL;
@@ -489,91 +487,91 @@ void* serve_client(void* conn)
 
     option = 0xff & buffer[3];
     option |= (0xff & buffer[4]) << 8;
+    fprintf(stderr, "Number of images: %d\n Option: %d\n", nr_of_images, option);
+    bzero(buffer, MAX_SIZE);
 
-    while(nr_of_images > 0)
+    int packet_number = 0;
+    while(1)
     {
-        while((bytes_read = recv(connfd, buffer, MAX_SIZE, 0)) > 0)
+        // fprintf(stderr, "Waiting data from client with fd: %d\n", connfd);
+        bytes_read = recv(connfd, buffer, MAX_SIZE, 0);
+        if (bytes_read <= 0){
+            fprintf(stderr, "ENDING THE FCKIN WHILE\n");
+            break;
+        }
+        int confirmation = 0;
+        request.message_type = buffer[0];
+        //fprintf(stderr, "Message type: %d , buffer[0] - 48 = %d\n", request.message_type, buffer[0] - 48);
+        switch (request.message_type){
+            case CONFIRMATION:
+                //fprintf(stderr, "Confirmation received\n");
+                break;
+            case NUMBER_OF_PACKETS:
+                number_of_packets = 0xff & buffer[1];
+                number_of_packets |= (0xff & buffer[2]) << 8;
+
+                fprintf(stderr, "Number of packets received: %d\n", number_of_packets);
+                snprintf(image_path, 128, "files/client%dimage%d.png", connfd, nr_of_images);
+
+                image = fopen(image_path, "wb");
+
+                confirmation = 1;
+                packet_number = 0;
+                break;
+            case PACKET:
+                //fprintf(stderr, "Packet received\n");
+                request.length = 0xff & buffer[1];
+                request.length |= (0xff & buffer[2]) << 8;
+                request.message = (char*) malloc (request.length);
+                memcpy(request.message, buffer + HEADER_SIZE, request.length);
+                confirmation = 1;
+                // fprintf(stderr, "Packet_number: %d\n", packet_number++);
+                break;
+        }
+
+        if (confirmation && number_of_packets > 1)
         {
-            int confirmation = 0;
-            request.message_type = buffer[0];
-            //fprintf(stderr, "Message type: %d , buffer[0] - 48 = %d\n", request.message_type, buffer[0] - 48);
-            switch (request.message_type){
-                case CONFIRMATION:
-                    //fprintf(stderr, "Confirmation received\n");
-                    if (request.message != NULL)
-                    {
-                        fprintf(stderr, "FREE: 2\n");
-                        free(request.message);
-                        request.message = NULL;
-                    }
-                    break;
-                case NUMBER_OF_PACKETS:
-                    //fprintf(stderr, "Number of packets received\n");
-                    if (request.message != NULL)
-                    {
-                        fprintf(stderr, "FREE: 3\n");
-                        free(request.message);
-                    }
-                    number_of_packets = 0xff & buffer[1];
-                    number_of_packets |= (0xff & buffer[2]) << 8;
+            //fprintf(stderr, "Sending confirmation\n");
+            bzero(buffer, MAX_SIZE);
+            buffer[0] = CONFIRMATION;
+            //fprintf(stderr,"Send pack %d\n", buffer[0]);
+            send(connfd, buffer, 1, 0);
+            //fprintf(stderr, "Confirmation sent\n");
+        }
 
-                    snprintf(image_path, 128, "files/client%dimage%d.png", connfd, nr_of_images);
-
-                    image = fopen(image_path, "wb");
-
-                    confirmation = 1;
-                    break;
-                case PACKET:
-                    //fprintf(stderr, "Packet received\n");
-                    if (request.message != NULL)
-                    {
-                        fprintf(stderr, "FREE: 4\n");
-                        free(request.message);
-                    }
-                    request.length = 0xff & buffer[1];
-                    request.length |= (0xff & buffer[2]) << 8;
-                    request.message = (char*) malloc (request.length);
-                    memcpy(request.message, buffer + HEADER_SIZE, request.length);
-                    confirmation = 1;
-                    break;
-            }
-
-            if (confirmation && number_of_packets > 1)
+        if (request.message != NULL)
+        {
+            //fprintf(stderr, "Writing image\n");
+            fwrite(request.message, 1, request.length, image);
+            //fprintf(stderr, "Writing imageeeeeeeeeeeee\n");
+            number_of_packets--;
+            if (number_of_packets == 0)
             {
-                //fprintf(stderr, "Sending confirmation\n");
-                bzero(buffer, MAX_SIZE);
-                buffer[0] = CONFIRMATION;
-                fprintf(stderr,"Send pack %d\n", buffer[0]);
-                send(connfd, buffer, 1, 0);
-                //fprintf(stderr, "Confirmation sent\n");
-            }
-
-            if (request.message != NULL)
-            {
-                //fprintf(stderr, "Writing image\n");
-                fwrite(request.message, 1, request.length, image);
-                //fprintf(stderr, "Writing imageeeeeeeeeeeee\n");
-                number_of_packets--;
-                if (number_of_packets == 0)
+                fclose(image);
+                process_image(image_path, option, nr_of_images, connfd);
+                //fprintf(stderr, "Hello de 2 ori?\n");
+                //fprintf(stderr, "Sock: %d\n", connfd);
+                send_back_image(connfd, image_path);
+                packet_number = 0;
+                nr_of_images--;
+                fprintf(stderr, "Remaining number of images: %d\n", nr_of_images);
+                
+                if (image_path)
                 {
-                    fclose(image);
-                    process_image(image_path, option, nr_of_images, connfd);
-                    fprintf(stderr, "Hello de 2 ori?\n");
-                    fprintf(stderr, "Sock: %d\n", connfd);
-                    send_back_image(connfd, image_path);
-                    
-                    if (image_path)
-                    {
-                        fprintf(stderr, "FREE: 5\n");
-                        //free(image_path);
-                    }
+                    fprintf(stderr, "FREE: 5\n");
+                    //free(image_path);
+                }
+                if (nr_of_images == 0){
+                    fprintf(stderr,"------ Nr of images is 0.");
+                    break;
                 }
             }
-            bzero(buffer, MAX_SIZE);
+            free(request.message);
+            request.message = NULL;
         }
-        nr_of_images--;
+        bzero(buffer, MAX_SIZE);
     }
-
+    fprintf(stderr, "END WHILE\n");
 
     if (bytes_read < 0)
     {
