@@ -1,11 +1,9 @@
-from http.client import SWITCHING_PROTOCOLS
 import io
 import os
 import argparse
 import shutil
 import socket
 import math
-from click import FileError
 import glob
 
 HOST = "127.0.0.1"
@@ -84,7 +82,12 @@ def convertInBytes(number):
 
 def confirmedMessage(c_message):
     return 1 == int.from_bytes(c_message, 'big')
- 
+
+def createFolder(path):
+    if not os.path.exists(path):
+        os.mkdir(path)
+        print(f"Directory for processed images '{path}' is created.")
+
 
 if __name__ == "__main__":
     arguments = commandDoc()
@@ -114,13 +117,7 @@ if __name__ == "__main__":
 
 
             # create folder for processed images
-            try:
-                os.mkdir(pimage_folder_path)
-                print(f"Directory for processed images '{pimage_folder_path}' is created.")
-            except OSError as error:
-                shutil.rmtree(pimage_folder_path)
-                os.mkdir(pimage_folder_path)
-                print(f"Directory for processed images '{pimage_folder_path}' is created.")
+            createFolder(pimage_folder_path)
 
             name_counter = 0
             for img in list_of_images:
@@ -149,7 +146,7 @@ if __name__ == "__main__":
                         print(conf_message)
                         break
                     else:
-                        image.seek(0, 0)
+                        image.seek(0, io.SEEK_SET)
                         packet_number = 0
                         while packet_number < nr_of_packets:
                             image_bytes_read = image.read(1021)
@@ -172,7 +169,7 @@ if __name__ == "__main__":
                             packet_number += 1
                     image.close()
                 except FileNotFoundError as error:
-                    print("Open Image...\n ",error)
+                    print(error)
 
                 # Waiting for server to send the processed image
                 # recieving number of packets from server
@@ -181,7 +178,7 @@ if __name__ == "__main__":
 
                 number_of_packets_from_server = getNumberOfImagePackets(s.recv(BUFF_MAX_SIZE))
                 if number_of_packets_from_server == b'':
-                    print("NO Number of packet sended from server!")
+                    print("NO number of packets sended from server!")
                     break
                 else:
                     print(f"Recieved number of packets from server: {number_of_packets_from_server}")
