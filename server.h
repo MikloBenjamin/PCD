@@ -18,5 +18,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <dirent.h>
+#include <stdarg.h>
+#include <png.h>
+#include <zlib.h>
 
 void* run_server(void* port);

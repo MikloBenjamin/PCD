@@ -30,10 +30,7 @@ typedef enum AdminMessageType{
 
 typedef struct Request
 {
-    MessageType message_type;       // X - 1st byte from buffer
-    unsigned length;        // Y - 2nd and 3rd byte from buffer *MASKED*
-    char *message;          // Z - Y number of bytes - MAX: 1021, when X = 3 
-} Request;
+    MessageType message_type;           unsigned length;            char *message;          } Request;
 
 typedef struct ServerSocket
 {
@@ -57,8 +54,7 @@ struct sigaction signal_handler;
 void handle_sigint(int sig_number)
 {
     waiting_clients = 0;
-    // Sys call to connect random client to end wait client thread
-    sem_post(&end_server);
+        sem_post(&end_server);
 }
 
 void* read_admin(void* conn);
@@ -75,8 +71,7 @@ void* run_server(void* port)
 
     signal(SIGINT, handle_sigint);
 
-    int opt = 1; // 1 TRUE, 0 FALSE
-    int sockfd;
+    int opt = 1;     int sockfd;
     ServerSocket server_socket;
 
     server_socket.socket_id = socket(AF_INET, SOCK_STREAM, 0);
@@ -164,16 +159,14 @@ void* read_admin(void* conn)
                 break;
             case END:
                 admins = -1;
-                // Sys call to connect random client to end wait client thread
-                sem_post(&end_server);
+                                sem_post(&end_server);
                 break;
             default:
                 break;
         }
         bzero(buff, sizeof(buff));
     }
-    //fprintf(stderr, "Socket closed\n");
-    close(connfd);
+        close(connfd);
     printf("Admin thread ended\n");
 }
 
@@ -184,8 +177,7 @@ void* wait_admin(void* param)
     int sockfd, connfd, len;
     struct sockaddr_in servaddr, cli;
    
-    // socket create and verification
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1) {
         printf("socket creation failed for admin...\n");
         exit(0);
@@ -194,21 +186,18 @@ void* wait_admin(void* param)
         printf("Socket successfully created for admin..\n");
     bzero(&servaddr, sizeof(servaddr));
    
-    // assign IP, PORT
-    servaddr.sin_family = AF_INET;
+        servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
     servaddr.sin_port = htons(PORT);
    
-    // Binding newly created socket to given IP and verification
-    if ((bind(sockfd, (SA*)&servaddr, sizeof(servaddr))) != 0) {
+        if ((bind(sockfd, (SA*)&servaddr, sizeof(servaddr))) != 0) {
         printf("socket bind failed for admin...\n");
         exit(0);
     }
     else
         printf("Socket successfully binded for admin..\n");
    
-    // Now server is ready to listen and verification
-    if ((listen(sockfd, 1)) != 0) {
+        if ((listen(sockfd, 1)) != 0) {
         printf("Listen failed for admin...\n");
         exit(0);
     }
@@ -280,8 +269,7 @@ void* wait_for_clients(void* server)
                 printf("Client connected\n");
                 pthread_create(&client_threads[i], NULL, serve_client, &sockfd);
             }
-            // else send Error to client, cant connect
-        }
+                    }
         else
         {
             fprintf(stderr, "Client connect failed, socket < 0: %d\n", sockfd);
@@ -290,9 +278,90 @@ void* wait_for_clients(void* server)
     
 }
 
+// typedef struct png_data_struct
+// {
+//     int x, y;
+
+//     int width, height;
+//     png_byte color_type;
+//     png_byte bit_depth;
+
+//     png_structp png_ptr;
+//     png_infop info_ptr;
+//     int number_of_passes;
+//     png_bytep * row_pointers;
+// } png_data_struct;
+
+// void abort_(const char * s, ...)
+// {
+//         va_list args;
+//         va_start(args, s);
+//         vfprintf(stderr, s, args);
+//         fprintf(stderr, "\n");
+//         va_end(args);
+//         abort();
+// }
+
+// png_data_struct* read_png_file(char* image_path)
+// {
+//     png_data_struct* png;
+//     char header[8];    /* 8 is the maximum size that can be checked */
+
+//     /* open file and test for it being a png */
+//     FILE *fp = fopen(image_path, "rb");
+//     if (!fp)
+//             abort_("[read_png_file] File %s could not be opened for reading", image_path);
+//     fread(header, 1, 8, fp);
+//     if (png_sig_cmp(header, 0, 8))
+//             abort_("[read_png_file] File %s is not recognized as a PNG file", image_path);
+
+
+//     /* initialize stuff */
+//     png->png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+
+//     if (!png->png_ptr)
+//             abort_("[read_png_file] png_create_read_struct failed");
+
+//     png->info_ptr = png_create_info_struct(png->png_ptr);
+//     if (!png->info_ptr)
+//             abort_("[read_png_file] png_create_info_struct failed");
+
+//     if (setjmp(png_jmpbuf(png->png_ptr)))
+//             abort_("[read_png_file] Error during init_io");
+
+//     png_init_io(png->png_ptr, fp);
+//     png_set_sig_bytes(png->png_ptr, 8);
+
+//     png_read_info(png->png_ptr, png->info_ptr);
+
+//     png->width = png_get_image_width(png->png_ptr, png->info_ptr);
+//     png->height = png_get_image_height(png->png_ptr, png->info_ptr);
+//     png->color_type = png_get_color_type(png->png_ptr, png->info_ptr);
+//     png->bit_depth = png_get_bit_depth(png->png_ptr, png->info_ptr);
+
+//     png->number_of_passes = png_set_interlace_handling(png->png_ptr);
+//     png_read_update_info(png->png_ptr, png->info_ptr);
+
+
+//     /* read file */
+//     if (setjmp(png_jmpbuf(png->png_ptr)))
+//             abort_("[read_png_file] Error during read_image");
+
+//     png->row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * png->height);
+//     for (png->y = 0; png->y < png->height; png->y++)
+//             png->row_pointers[png->y] = (png_byte*) malloc(png_get_rowbytes(png->png_ptr, png->info_ptr));
+
+//     png_read_image(png->png_ptr, png->row_pointers);
+
+//     fclose(fp);
+//     return png;
+// }
+
 void process_negativ(char image_path[])
 {
     fprintf(stderr, "proessing image for NEGATIV \n");
+    // png_data_struct* png = read_png_file(image_path);
+    // fprintf(stderr, "PNG width: %d, height %d\n", png->width, png->height);
 }
 
 void process_sepia(char image_path[])
@@ -333,8 +402,9 @@ void process_image(char* image_path, int option, int image_number, int client_id
         default:
             processed = 0;
     }
-    // if (processed)
-    //     strcpy(image_path, processed_image_path);
+    processed = 0; // rem
+    if (processed)
+        strcpy(image_path, processed_image_path);
 }
 
 void send_back_image(int connfd, char* image_path)
@@ -357,8 +427,7 @@ void send_back_image(int connfd, char* image_path)
     fseek(image, 0, SEEK_SET);
 
     buffer[0] = NUMBER_OF_PACKETS;
-    //fprintf(stderr, "buffer[0] = %d\n", buffer[0]);
-
+    
     if (size % effective_msg_length == 0)
     {
         size = size / effective_msg_length;
@@ -371,17 +440,14 @@ void send_back_image(int connfd, char* image_path)
     buffer[1] = size & 0xff;
     buffer[2] = (size >> 8) & 0xff;
 
-    //fprintf(stderr,"Send pack %d\n", buffer[0]);
     if (send(connfd, buffer, MAX_SIZE, 0) == -1)
     {
         fprintf(stderr, "Error while sending the data.\n");
         fclose(image);
-        //fprintf(stderr, "Socket closed\n");
-        close(connfd);
+                close(connfd);
         exit(1);
     }
 
-    //fprintf(stderr, "Error while reading from socket: %d\n", errno);
     perror(NULL);
 
     bzero(buffer, MAX_SIZE);
@@ -389,45 +455,34 @@ void send_back_image(int connfd, char* image_path)
     {
         fprintf(stderr, "READ CONFIRMATION ERROR\n");
         fclose(image);
-        //fprintf(stderr, "Socket closed\n");
         close(connfd);
         exit(1);
     }
 
-    //fprintf(stderr, "Error while reading from socket: %d\n", errno);
     perror(NULL);
 
     
     if (buffer[0] != CONFIRMATION)
     {
-        fprintf(stderr, "Read something else, instead of CONFIRMATION");
+        fprintf(stderr, "Read something else, instead of CONFIRMATION\n");
         fclose(image);
-        //fprintf(stderr, "Socket closed\n");
         close(connfd);
         exit(1);
     }
     bzero(buffer, MAX_SIZE);
 
-    //fprintf(stderr, "Sock: %d\n", connfd);
-
     while((bytes_read = fread(buffer + HEADER_SIZE, sizeof(char), effective_msg_length, image)) > 0)
     {
-        //fprintf(stderr,"Send pack 3\n");
-        //fprintf(stderr,"SCCCCCCc\n");
         buffer[0] = 3;
         buffer[1] = bytes_read & 0xff;
         buffer[2] = (bytes_read >> 8) & 0xff;
 
-        //fprintf(stderr, "%ld\n", ftell(image));
-        //fprintf(stderr,"Send pack %d\n", buffer[0]);
-        if (send(connfd, buffer, bytes_read + HEADER_SIZE, 0) == -1)
+                        if (send(connfd, buffer, bytes_read + HEADER_SIZE, 0) == -1)
         {
             fprintf(stderr, "Error while sending the data.\n");
-            //fprintf(stderr, "FREE: 1\n");
-            free(image_path);
+                        free(image_path);
             fclose(image);
-            //fprintf(stderr, "Socket closed\n");
-            close(connfd);
+                        close(connfd);
             exit(1);
         }
 
@@ -435,32 +490,27 @@ void send_back_image(int connfd, char* image_path)
         {
             fprintf(stderr, "READ CONFIRMATION ERROR\n");
             fclose(image);
-            //fprintf(stderr, "Socket closed\n");
-            close(connfd);
+                        close(connfd);
             exit(1);
         }
 
         if (buffer[0] != CONFIRMATION && bytes_read > 0)
         {
-            fprintf(stderr, "Read something else, instead of CONFIRMATION");
+            fprintf(stderr, "Read something else, instead of CONFIRMATION\n");
             fclose(image);
-            //fprintf(stderr, "Socket closed\n");
-            close(connfd);
+                        close(connfd);
             exit(1);
         }
         bzero(buffer, MAX_SIZE);
     }
-    //fprintf(stderr, "Sock: %d\n", connfd);
-    if (bytes_read < 0)
+        if (bytes_read < 0)
     {
             fprintf(stderr, "Error while reading from socket: %d", errno);
             perror(NULL);
     }
 
     fclose(image);
-    //fprintf(stderr, "Socket closed\n");
-    //close(connfd);
-}
+        }
 
 void* serve_client(void* conn)
 {
@@ -493,19 +543,16 @@ void* serve_client(void* conn)
     int packet_number = 0;
     while(1)
     {
-        // fprintf(stderr, "Waiting data from client with fd: %d\n", connfd);
-        bytes_read = recv(connfd, buffer, MAX_SIZE, 0);
+                bytes_read = recv(connfd, buffer, MAX_SIZE, 0);
         if (bytes_read <= 0){
             fprintf(stderr, "ENDING THE FCKIN WHILE\n");
             break;
         }
         int confirmation = 0;
         request.message_type = buffer[0];
-        //fprintf(stderr, "Message type: %d , buffer[0] - 48 = %d\n", request.message_type, buffer[0] - 48);
-        switch (request.message_type){
+                switch (request.message_type){
             case CONFIRMATION:
-                //fprintf(stderr, "Confirmation received\n");
-                break;
+                                break;
             case NUMBER_OF_PACKETS:
                 number_of_packets = 0xff & buffer[1];
                 number_of_packets |= (0xff & buffer[2]) << 8;
@@ -519,39 +566,30 @@ void* serve_client(void* conn)
                 packet_number = 0;
                 break;
             case PACKET:
-                //fprintf(stderr, "Packet received\n");
-                request.length = 0xff & buffer[1];
+                                request.length = 0xff & buffer[1];
                 request.length |= (0xff & buffer[2]) << 8;
                 request.message = (char*) malloc (request.length);
                 memcpy(request.message, buffer + HEADER_SIZE, request.length);
                 confirmation = 1;
-                // fprintf(stderr, "Packet_number: %d\n", packet_number++);
-                break;
+                                break;
         }
 
         if (confirmation && number_of_packets > 1)
         {
-            //fprintf(stderr, "Sending confirmation\n");
-            bzero(buffer, MAX_SIZE);
+                        bzero(buffer, MAX_SIZE);
             buffer[0] = CONFIRMATION;
-            //fprintf(stderr,"Send pack %d\n", buffer[0]);
-            send(connfd, buffer, 1, 0);
-            //fprintf(stderr, "Confirmation sent\n");
-        }
+                        send(connfd, buffer, 1, 0);
+                    }
 
         if (request.message != NULL)
         {
-            //fprintf(stderr, "Writing image\n");
-            fwrite(request.message, 1, request.length, image);
-            //fprintf(stderr, "Writing imageeeeeeeeeeeee\n");
-            number_of_packets--;
+                        fwrite(request.message, 1, request.length, image);
+                        number_of_packets--;
             if (number_of_packets == 0)
             {
                 fclose(image);
                 process_image(image_path, option, nr_of_images, connfd);
-                //fprintf(stderr, "Hello de 2 ori?\n");
-                //fprintf(stderr, "Sock: %d\n", connfd);
-                send_back_image(connfd, image_path);
+                                                send_back_image(connfd, image_path);
                 packet_number = 0;
                 nr_of_images--;
                 fprintf(stderr, "Remaining number of images: %d\n", nr_of_images);
@@ -559,8 +597,7 @@ void* serve_client(void* conn)
                 if (image_path)
                 {
                     fprintf(stderr, "FREE: 5\n");
-                    //free(image_path);
-                }
+                                    }
                 if (nr_of_images == 0){
                     fprintf(stderr,"------ Nr of images is 0.");
                     break;
