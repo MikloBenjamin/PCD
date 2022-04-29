@@ -41,6 +41,13 @@ struct png_names
     int current_index;
 };
 
+typedef enum MessageType{
+    NR_IMAGES_AND_FILTERS = 0,
+    CONFIRMATION = 1,
+    NUMBER_OF_PACKETS = 2,
+    PACKET = 3,
+    ERROR = 4
+} MessageType;
 
 struct thread_parameters
 {
@@ -95,7 +102,7 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
     size = ftell(img_descriptor);               // get current file pointer
     fseek(img_descriptor, 0, SEEK_SET);         // seek back to beginning of file
 
-    buffer[0] = 2;          // Anunta pachet cu nr de pachete
+    buffer[0] = NUMBER_OF_PACKETS;          // Anunta pachet cu nr de pachete
     if (size % effective_msg_length == 0)
     {
         size = size / effective_msg_length;
@@ -115,11 +122,9 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
         fprintf(stderr, "Error while sending the data.\n");
         free(image_path);
         fclose(img_descriptor);
-        fprintf(stderr, "Socket closed\n");
         close(socket_fd);
         exit(4);
     }
-    //fprintf(stderr, "Package: %d\n", buffer[0]);
 
     /*---------------------------------------------------------------------------------------
     CITIREA SI TRIMITEREA PACHETELOR CU POZA EFECTIVA
@@ -130,7 +135,7 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
     // Fiecare bucata citita e trimisa serverului
     while((bytes_read = fread(buffer + HEADER_SIZE, sizeof(char), effective_msg_length, img_descriptor)) == effective_msg_length)
     {
-        buffer[0] = 3;                          // Tip de mesaj: trimitere pachet de date
+        buffer[0] = PACKET;                          // Tip de mesaj: trimitere pachet de date
         buffer[1] = bytes_read & 0xff;          // Izolam primul byte din bytes_read
         buffer[2] = (bytes_read >> 8) & 0xff;   // Izolam al doilea byte din bytes_read
 
@@ -142,16 +147,14 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
             fprintf(stderr, "Error while sending the data.\n");
             free(image_path);
             fclose(img_descriptor);
-            fprintf(stderr, "Socket closed\n");
             close(socket_fd);
             exit(4);
         }
-        //fprintf(stderr, "Package: %d\n", buffer[0]);
     }
 
     if (feof(img_descriptor))
     {
-        buffer[0] = 3;                          // Tip de mesaj: trimitere pachet de date
+        buffer[0] = PACKET;                          // Tip de mesaj: trimitere pachet de date
         buffer[1] = bytes_read & 0xff;          // Izolam primul byte din bytes_read
         buffer[2] = (bytes_read >> 8) & 0xff;   // Izolam al doilea byte din bytes_read
 
@@ -162,11 +165,9 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
             fprintf(stderr, "Error while sending the data.\n");
             free(image_path);
             fclose(img_descriptor);
-            fprintf(stderr, "Socket closed\n");
             close(socket_fd);
             exit(4);
         }
-        //fprintf(stderr, "Package: %d", buffer[0]);
     }
 
     free(image_path);
@@ -225,7 +226,7 @@ void *find_images(void *args)
     // Initializam numarul total de poze - 1
     set_number_of_total_images(parameters->path);
 
-    buffer[0] = 0;                                      // Anunta pachet cu nr de pachete
+    buffer[0] = NR_IMAGES_AND_FILTERS;                  // Anunta pachet cu nr de pachete
     buffer[1] = parameters->png_info.len & 0xff;        // Izolam primul byte din bytes_read
     buffer[2] = parameters->png_info.len >> 8 & 0xff;   // Izolam al doilea byte din bytes_read
     buffer[3] = parameters->option & 0xff;              // Izolam primul byte din bytes_read
@@ -237,8 +238,6 @@ void *find_images(void *args)
         close(parameters->socket_fd);
         exit(4);
     }
-
-    fprintf(stderr, "TRIMIS: %d\n", parameters->png_info.len);
 
     for (int i = 0; i < parameters->png_info.len; i++)
     {
@@ -289,11 +288,11 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
 
     switch (request.message_type)
     {
-    case 1:         // Confirmare de primire pachet
+    case CONFIRMATION:         // Confirmare de primire pachet
         sem_post(&sem_send_package);
         break;
 
-    case 2:         // Pachet cu informatii despre poza care urmeaza sa fie trimisa
+    case NUMBER_OF_PACKETS:         // Pachet cu informatii despre poza care urmeaza sa fie trimisa
         // Contruim calea spre locul unde va fi pusa poza noua
         if (png_info->current_index < png_info->len)
         {
@@ -307,7 +306,6 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
             if (!processed_img_handler)
             {
                 fprintf(stderr, "Could not open image for reading: \n");
-                fprintf(stderr, "Socket closed\n");
                 close(socket_fd);
                 exit(2);
             }
@@ -316,17 +314,15 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
             current_package = 0;
 
             // Trimitere confirmare de primire pachet
-            buffer[0] = 1;
-            //fprintf(stderr, "Sock %d\n", socket_fd);
+            buffer[0] = CONFIRMATION;
+
             if (send(socket_fd, buffer, 1, 0) == -1)
             {
                 fprintf(stderr, "Error while sending the data.\n");
                 fclose(processed_img_handler);
-                fprintf(stderr, "Socket closed\n");
                 close(socket_fd);
                 exit(4);
             }
-            //fprintf(stderr, "Package: %d", buffer[0]);
         }
         else
         {
@@ -336,7 +332,7 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
 
         break;
 
-    case 3:         // Pachet cu date din poza
+    case PACKET:         // Pachet cu date din poza
 
         if (current_package < total_packages)
         {
@@ -350,6 +346,16 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
 
             current_package++;
 
+            buffer[0] = CONFIRMATION;
+
+            if (send(socket_fd, buffer, 1, 0) == -1)
+            {
+                fprintf(stderr, "Error while sending the data.\n");
+                fclose(processed_img_handler);
+                close(socket_fd);
+                exit(4);
+            }
+
             // Daca am ajuns la ultimul pachet, inchidem fisierul fiindca s-a primit toata poza si
             // incrementam semaforul pentru a citi mai departe urmatoarea poza
             if (current_package == total_packages)
@@ -361,22 +367,6 @@ void process_request(Request request, int socket_fd, char *output_dir_path, stru
                 pthread_mutex_lock(&mutex_buffer);
                 total_images--;
                 pthread_mutex_unlock(&mutex_buffer);
-            }
-            else    // Pentru ultimul pachet nu mai trimitem confirmare
-            {
-                // Trimitere confirmare de primire pachet
-                buffer[0] = 1;
-
-                if (send(socket_fd, buffer, 1, 0) == -1)
-                {
-                    fprintf(stderr, "Error while sending the data.\n");
-                    free(request.message);
-                    fclose(processed_img_handler);
-                    fprintf(stderr, "Socket closed\n");
-                    close(socket_fd);
-                    exit(4);
-                }
-                //fprintf(stderr, "Package: %d", buffer[0]);
             }
         }
 
@@ -416,7 +406,6 @@ void *manage_requests(void *args)
         pthread_mutex_unlock(&mutex_buffer);
         sem_post(&sem_empty);    // Cand apare un loc liber, atunci incrementam cate locuri pline sunt, ptr ca am adaugat un element
 
-       // fprintf(stderr, "MANAGE REQUEST: %d\n", cont);
         process_request(request, parameters->socket_fd, parameters->output_path, &(parameters->png_info));   // Trimitem mesajul la procesat
     }
 }
@@ -432,7 +421,7 @@ void *read_requests(void *args)
         Request request;
 
         bzero(buffer, MAX_SIZE);
-        //fprintf(stderr, "MSG TYPE: %d\n", buffer[0]);
+
         if (recv(socket_fd, buffer, MAX_SIZE, 0) < 0)
         {
             fprintf(stderr, "Error while reading from socket: %d", errno);
@@ -440,13 +429,9 @@ void *read_requests(void *args)
         }
         else 
         {
-            //fprintf(stderr, "CONT READ REQUEST: %d\n", cont);
-
-            request.message_type = buffer[0];               // Dam X
-            request.length = 0xff & buffer[1];                 // Primul byte din Y
+            request.message_type = buffer[0];                // Dam X
+            request.length = 0xff & buffer[1];               // Primul byte din Y
             request.length |= (0xff & buffer[2]) << 8;       // Al doilea byte din Y
-
-          //  fprintf(stderr, "MSG TYPE: %d\n", request.message_type);
 
             if (request.message_type == 3)      // Doar mesajele de tip 3 au un Z cu continut
             {
@@ -457,7 +442,6 @@ void *read_requests(void *args)
             sem_wait(&sem_empty);   // Daca nu avem locuri libere in coada, asteptam pana se fac
             pthread_mutex_lock(&mutex_buffer);
             requests[length_of_requests++] = request;
-            //printf("%d\n", length_of_requests - 1);
             pthread_mutex_unlock(&mutex_buffer);
             sem_post(&sem_full);    // Cand apare un loc liber, atunci incrementam cate locuri pline sunt, ptr ca am adaugat un element
         }
@@ -467,6 +451,7 @@ void *read_requests(void *args)
 int check_if_dir_exists(char *path)
 {
     DIR* dir = opendir(path);
+
     if (dir) 
     {
         closedir(dir);
@@ -668,7 +653,6 @@ int main(int argc, char* argv[])
     pthread_cancel(reader_thread);
 
     close(socket_fd);
-    fprintf(stderr, "Socket closed\n");
     free(parameters.path);
     free(parameters.output_path);
 
