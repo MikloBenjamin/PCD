@@ -1,20 +1,27 @@
 import io
 import os
 import argparse
-import shutil
+import threading
 import socket
 import math
 import glob
+import time
 
 HOST = "127.0.0.1"
 PORT = 7366
 BUFF_MAX_SIZE = 1024
+PACKET_SIZE = 1021
 
 NR_IMAGES_AND_OP = 0
 CONFIRMATION = 1
 NUMBER_OF_PACKETS = 2
 PACKET = 3
 ERROR = 4
+
+confirmation_semaphore = threading.Semaphore()
+image_semaphore = threading.Semaphore()
+mutex = threading.Lock()
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 #  help for command
 def commandDoc():
@@ -80,16 +87,122 @@ def convertInBytes(number):
 
     return number_in_bytes1, number_in_bytes2
 
-def confirmedMessage(c_message):
-    return 1 == int.from_bytes(c_message, 'big')
-
 def createFolder(path):
     if not os.path.exists(path):
         os.mkdir(path)
         print(f"Directory for processed images '{path}' is created.")
 
+def waitForConfirmation():
+    global mutex
+    print("MUTEX locked!")
+    mutex.acquire()
+    # mutex = False
+    while mutex.locked():
+    # while mutex == False:
+        pass
+
+def sendImages():
+    global mutex
+    global confirmation_semaphore
+    global image_semaphore
+    createFolder(pimage_folder_path)
+
+    image_semaphore.acquire()
+    name_counter = 0
+    for img in list_of_images:
+        image_name = list_of_image_names[name_counter]
+        image = None
+        try:
+            image = open(img, "rb")
+        except FileNotFoundError as error:
+            print(error)
+            continue
+
+        # prepare second pachet with number of image parts
+        image.seek(0, io.SEEK_END)
+        nr_of_packets =  math.ceil(image.tell() / PACKET_SIZE)
+        image.seek(0, io.SEEK_SET)
+        nr_pack_in_bytes1, nr_pack_in_bytes2 = convertInBytes(nr_of_packets)
+
+        print("Sending image: ", img)
+
+        # 2. send number of packets
+        # server MUST send a confirm msg (2.1)
+
+        # print(f"sendImages: Prepare image '{image_name} for sending'...")
+        s.send(bytearray([NUMBER_OF_PACKETS, nr_pack_in_bytes1, nr_pack_in_bytes2])) 
+        
+        # 2.1
+        # print("sendImages: Number of packets sent : ", nr_of_packets, "\n\tneed confirmation!")
+        # waitForConfirmation()
+        confirmation_semaphore.acquire()
+        # print("SZIVEM 1 Confirmed!")
+        # print("sendImages: NUMBER OF PACKETS IS CONFIRMED.")
+        packet_number = 0
+        while packet_number < nr_of_packets:
+            image_bytes_read = image.read(PACKET_SIZE)
+            image_packet_size = len(image_bytes_read)
+            packet_size_in_bytes1, packet_size_in_bytes2 = convertInBytes(image_packet_size)
+            
+            # 3. send image packets/parts
+            # server MUST send confirm message (3.1)
+
+            s.send(bytearray([PACKET, packet_size_in_bytes1, packet_size_in_bytes2]) + image_bytes_read)
+            
+            # 3.1
+            if packet_number + 1 < nr_of_packets:
+                # print("\n\nsendImages: SENDING THE IMAGE!!!\nimage packet sent! packet number = ", packet_number, "\n\tneed confirmation!")
+                # waitForConfirmation()
+                confirmation_semaphore.acquire()
+                # print("SZIVEM 2 Confirmed!")
+                # print("sendImages: image packet confirmed!")
+
+            packet_number += 1
+        image.close()
+        print("### WAITING BEFORE SENDING NEXT IMAGE ###")
+        image_semaphore.acquire()
+        print("### CAN SEND NEXT IMEAGE ###")
+        time.sleep(1)
+        
+
+def recieveImages():
+    global mutex
+    global confirmation_semaphore
+    global image_semaphore
+    # Waiting for server to send the processed image
+    # recieving number of packets from server
+    number_of_packets_from_server = 0
+    name_counter = 0
+    new_file = None
+    while True:
+        packet_from_server = s.recv(BUFF_MAX_SIZE)
+        if packet_from_server[0] == CONFIRMATION:
+            confirmation_semaphore.release()
+        elif packet_from_server[0] == NUMBER_OF_PACKETS:
+            print(f"recieveImages: I recieved packet with type {NUMBER_OF_PACKETS}")
+            number_of_packets_from_server = getNumberOfImagePackets(packet_from_server) + 1
+            new_file = open(f"{pimage_folder_path}/{list_of_image_names[name_counter]}", "wb")
+            name_counter += 1   
+        elif packet_from_server[0] == PACKET:
+            # print(f"recieveImages: I recieved packet with type {PACKET}")
+            new_file.write(packet_from_server[PACKET:])
+        if number_of_packets_from_server > 0:
+            number_of_packets_from_server -= 1
+            s.send(bytearray([CONFIRMATION]))
+        if number_of_packets_from_server == 0:
+            if new_file is not None:
+                print(f"recieveImages: Image '{list_of_image_names[name_counter - 1]}' SAVED!\n")
+                new_file.close()
+                new_file = None
+                image_semaphore.release()
+                if name_counter == len(list_of_image_names):
+                    break
+    print(f"recieveImages: DONE! Check the processed images in {pimage_folder_path}/!")
+
 
 if __name__ == "__main__":
+    # mutex = threading.Lock()
+    
     arguments = commandDoc()
     correct, image_folder_path, pimage_folder_path, option = commandAnalyze(arguments)
     if correct == 1:
@@ -99,113 +212,30 @@ if __name__ == "__main__":
     elif correct == 3:
         print("Client_3: Need image folder path.")
     else:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((HOST, PORT))
+        s.connect((HOST, PORT))
 
-            # prepare first pachet with nr_images and process option
-            list_of_image_names = [name for name in os.listdir(image_folder_path) if name.endswith(".png")]
-            list_of_images = glob.glob(f"{image_folder_path}/*.png")
-            nr_of_image = len(list_of_images)
-            nr_image_bytes1, nr_image_bytes2 = convertInBytes(nr_of_image)
-            option_bytes1, option_bytes2 = convertInBytes(option)
+        # prepare first pachet with nr_images and process option
+        list_of_image_names = [name for name in os.listdir(image_folder_path) if name.endswith(".png")]
+        list_of_images = glob.glob(f"{image_folder_path}/*.png")
+        nr_of_image = len(list_of_images)
+        nr_image_bytes1, nr_image_bytes2 = convertInBytes(nr_of_image)
+        option_bytes1, option_bytes2 = convertInBytes(option)
 
-            # 1: send number images and option
-            #server DO NOT send a confirm msg
+        # 1: send number images and option
+        #server DO NOT send a confirm msg
 
-            buffer = bytearray([NR_IMAGES_AND_OP, nr_image_bytes1, nr_image_bytes2, option_bytes1, option_bytes2])
-            s.send(buffer) 
+        buffer = bytearray([NR_IMAGES_AND_OP, nr_image_bytes1, nr_image_bytes2, option_bytes1, option_bytes2])
+        s.send(buffer) 
+        
+        thread_send_images = threading.Thread(target=sendImages)
+        thread_recieve_processed_images = threading.Thread(target=recieveImages)
 
+        thread_send_images.start()
+        thread_recieve_processed_images.start()
 
-            # create folder for processed images
-            createFolder(pimage_folder_path)
+        thread_send_images.join()
+        thread_recieve_processed_images.join()
 
-            name_counter = 0
-            for img in list_of_images:
-                image_name = list_of_image_names[name_counter]
-                try:
-                    image = open(img, "rb")
-
-                    # prepare second pachet with number of image parts
-                    image.seek(0, io.SEEK_END)
-                    nr_of_packets =  math.ceil(image.tell() / 1021)
-                    nr_pack_in_bytes1, nr_pack_in_bytes2 = convertInBytes(nr_of_packets)
-
-                    # 2. send number of packets
-                    # server MUST send a confirm msg (2.1)
-
-                    buffer = bytearray([NUMBER_OF_PACKETS, nr_pack_in_bytes1, nr_pack_in_bytes2])
-                    print(f"Prepare image '{image_name} for sending'...")
-                    s.send(buffer) 
-                    
-                    # 2.1
-                    print("Number of packets sent : ", nr_of_packets)
-                    conf_message = s.recv(BUFF_MAX_SIZE)
-                    print("CONFIRM: Server recieved.")
-                    if not confirmedMessage(conf_message):
-                        print("The message is not confirmed...")
-                        print(conf_message)
-                        break
-                    else:
-                        image.seek(0, io.SEEK_SET)
-                        packet_number = 0
-                        while packet_number < nr_of_packets:
-                            image_bytes_read = image.read(1021)
-                            image_packet_size = len(image_bytes_read)
-                            packet_size_in_bytes1, packet_size_in_bytes2 = convertInBytes(image_packet_size)
-                            
-                            # 3. send image packets/parts
-                            # server MUST send confirm message (3.1)
-
-                            buffer = bytearray([PACKET, packet_size_in_bytes1, packet_size_in_bytes2]) + image_bytes_read
-                            s.send(buffer)
-                            
-                            # 3.1
-                            if packet_number + 1 < nr_of_packets:
-                                conf_message = s.recv(BUFF_MAX_SIZE)
-                                if not confirmedMessage(conf_message):
-                                    print("The message is not confirmed...")
-                                    break
- 
-                            packet_number += 1
-                    image.close()
-                except FileNotFoundError as error:
-                    print(error)
-
-                # Waiting for server to send the processed image
-                # recieving number of packets from server
-
-                print("Waiting for server...")
-
-                number_of_packets_from_server = getNumberOfImagePackets(s.recv(BUFF_MAX_SIZE))
-                if number_of_packets_from_server == b'':
-                    print("NO number of packets sended from server!")
-                    break
-                else:
-                    print(f"Recieved number of packets from server: {number_of_packets_from_server}")
-
-                    # sending confirmation 
-                    buffer = bytearray([CONFIRMATION])
-                    s.send(buffer)
-
-                    # create a new png file for every processed image
-                    packet_number = 0
-                    with open(f"{pimage_folder_path}/{image_name}", "wb") as new_file:
-                        while packet_number < number_of_packets_from_server:
-
-                            # client recieve packets from server with processed image
-                            # verifying the recieved message exists
-                            # write in the new png file
-                            
-                            packet_from_server = s.recv(BUFF_MAX_SIZE)
-                            if packet_from_server == b'':
-                                print("Packet is empty!!!")
-                                break
-                            else:
-                                s.send(buffer)
-                                new_file.write(packet_from_server[PACKET:])
-                                
-                            packet_number += 1
-                        name_counter += 1
-                    print(f"Image '{image_name}' SAVED!\n")
-            print("DONE! Check the processed images in the folder!")
+        s.close()
+               
 
