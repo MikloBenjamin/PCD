@@ -432,25 +432,25 @@ void process_black_and_white(char image_path[], png_data_struct* png)
 {
     fprintf(stderr, "proessing image for BLACK_AND_WHITE \n");
 
-     if (png_get_color_type(png->png_ptr, png->info_ptr) == PNG_COLOR_TYPE_RGB)
-                abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
-                       "(lacks the alpha channel)");
+    if (png_get_color_type(png->png_ptr, png->info_ptr) == PNG_COLOR_TYPE_RGB)
+            abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
+                    "(lacks the alpha channel)");
 
-        if (png_get_color_type(png->png_ptr, png->info_ptr) != PNG_COLOR_TYPE_RGBA)
-                abort_("[process_file] color_type of input file must be PNG_COLOR_TYPE_RGBA (%d) (is %d)",
-                       PNG_COLOR_TYPE_RGBA, png_get_color_type(png->png_ptr, png->info_ptr));
+    if (png_get_color_type(png->png_ptr, png->info_ptr) != PNG_COLOR_TYPE_RGBA)
+            abort_("[process_file] color_type of input file must be PNG_COLOR_TYPE_RGBA (%d) (is %d)",
+                    PNG_COLOR_TYPE_RGBA, png_get_color_type(png->png_ptr, png->info_ptr));
 
-        for (png->y = 0; png->y < png->height; png->y++) 
-        {
-                png_byte* row = png->row_pointers[png->y];
+    for (png->y = 0; png->y < png->height; png->y++) 
+    {
+            png_byte* row = png->row_pointers[png->y];
 
-                for (png->x = 0; png->x < png->width; png->x++) 
-                {
-                        png_byte* ptr = &(row[png->x * 4]);
-                        int avg = (ptr[0] + ptr[1] + ptr[2]) / 3;
-                        ptr[0] = ptr[1] = ptr[2] = avg;
-                }
-        }
+            for (png->x = 0; png->x < png->width; png->x++) 
+            {
+                    png_byte* ptr = &(row[png->x * 4]);
+                    int avg = (ptr[0] + ptr[1] + ptr[2]) / 3;
+                    ptr[0] = ptr[1] = ptr[2] = avg;
+            }
+    }
 }
 
 void process_image(char* image_path, int option, int image_number, int client_id)
