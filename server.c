@@ -278,84 +278,138 @@ void* wait_for_clients(void* server)
     
 }
 
-// typedef struct png_data_struct
-// {
-//     int x, y;
+typedef struct png_data_struct
+{
+    int x, y;
 
-//     int width, height;
-//     png_byte color_type;
-//     png_byte bit_depth;
+    int width, height;
+    png_byte color_type;
+    png_byte bit_depth;
 
-//     png_structp png_ptr;
-//     png_infop info_ptr;
-//     int number_of_passes;
-//     png_bytep * row_pointers;
-// } png_data_struct;
+    png_structp png_ptr;
+    png_infop info_ptr;
+    int number_of_passes;
+    png_bytep * row_pointers;
+} png_data_struct;
 
-// void abort_(const char * s, ...)
-// {
-//         va_list args;
-//         va_start(args, s);
-//         vfprintf(stderr, s, args);
-//         fprintf(stderr, "\n");
-//         va_end(args);
-//         abort();
-// }
+void abort_(const char * s, ...)
+{
+        va_list args;
+        va_start(args, s);
+        vfprintf(stderr, s, args);
+        fprintf(stderr, "\n");
+        va_end(args);
+        abort();
+}
 
-// png_data_struct* read_png_file(char* image_path)
-// {
-//     png_data_struct* png;
-//     char header[8];    /* 8 is the maximum size that can be checked */
+void read_png_file(char* image_path, png_data_struct* png)
+{
+    char header[8];    /* 8 is the maximum size that can be checked */
 
-//     /* open file and test for it being a png */
-//     FILE *fp = fopen(image_path, "rb");
-//     if (!fp)
-//             abort_("[read_png_file] File %s could not be opened for reading", image_path);
-//     fread(header, 1, 8, fp);
-//     if (png_sig_cmp(header, 0, 8))
-//             abort_("[read_png_file] File %s is not recognized as a PNG file", image_path);
+    /* open file and test for it being a png */
+    FILE *fp = fopen(image_path, "rb");
 
+    if (!fp)
+    {
+        abort_("[read_png_file] File %s could not be opened for reading", image_path);
+    }
+    fread(header, 1, 8, fp);
+    if (png_sig_cmp(header, 0, 8))
+            abort_("[read_png_file] File %s is not recognized as a PNG file", image_path);
 
-//     /* initialize stuff */
-//     png->png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    /* initialize stuff */
+    png->png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 
-//     if (!png->png_ptr)
-//             abort_("[read_png_file] png_create_read_struct failed");
-
-//     png->info_ptr = png_create_info_struct(png->png_ptr);
-//     if (!png->info_ptr)
-//             abort_("[read_png_file] png_create_info_struct failed");
-
-//     if (setjmp(png_jmpbuf(png->png_ptr)))
-//             abort_("[read_png_file] Error during init_io");
-
-//     png_init_io(png->png_ptr, fp);
-//     png_set_sig_bytes(png->png_ptr, 8);
-
-//     png_read_info(png->png_ptr, png->info_ptr);
-
-//     png->width = png_get_image_width(png->png_ptr, png->info_ptr);
-//     png->height = png_get_image_height(png->png_ptr, png->info_ptr);
-//     png->color_type = png_get_color_type(png->png_ptr, png->info_ptr);
-//     png->bit_depth = png_get_bit_depth(png->png_ptr, png->info_ptr);
-
-//     png->number_of_passes = png_set_interlace_handling(png->png_ptr);
-//     png_read_update_info(png->png_ptr, png->info_ptr);
+    if (!png->png_ptr)
+            abort_("[read_png_file] png_create_read_struct failed");
 
 
-//     /* read file */
-//     if (setjmp(png_jmpbuf(png->png_ptr)))
-//             abort_("[read_png_file] Error during read_image");
+    png->info_ptr = png_create_info_struct(png->png_ptr);
+    if (!png->info_ptr)
+            abort_("[read_png_file] png_create_info_struct failed");
 
-//     png->row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * png->height);
-//     for (png->y = 0; png->y < png->height; png->y++)
-//             png->row_pointers[png->y] = (png_byte*) malloc(png_get_rowbytes(png->png_ptr, png->info_ptr));
+    if (setjmp(png_jmpbuf(png->png_ptr)))
+            abort_("[read_png_file] Error during init_io");
 
-//     png_read_image(png->png_ptr, png->row_pointers);
+    png_init_io(png->png_ptr, fp);
+    png_set_sig_bytes(png->png_ptr, 8);
+    png_read_info(png->png_ptr, png->info_ptr);
+    png->width = png_get_image_width(png->png_ptr, png->info_ptr);
+    png->height = png_get_image_height(png->png_ptr, png->info_ptr);
+    png->color_type = png_get_color_type(png->png_ptr, png->info_ptr);
+    png->bit_depth = png_get_bit_depth(png->png_ptr, png->info_ptr);
+    png->number_of_passes = png_set_interlace_handling(png->png_ptr);
+    png_read_update_info(png->png_ptr, png->info_ptr);
 
-//     fclose(fp);
-//     return png;
-// }
+    /* read file */
+    if (setjmp(png_jmpbuf(png->png_ptr)))
+            abort_("[read_png_file] Error during read_image");
+
+    png->row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * png->height);
+    for (png->y = 0; png->y < png->height; png->y++)
+            png->row_pointers[png->y] = (png_byte*) malloc(png_get_rowbytes(png->png_ptr, png->info_ptr));
+
+    png_read_image(png->png_ptr, png->row_pointers);
+
+    fclose(fp);
+}
+
+void write_png_file(char* file_name, png_data_struct* png)
+{
+        /* create file */
+        FILE *fp = fopen(file_name, "wb");
+        if (!fp)
+                abort_("[write_png_file] File %s could not be opened for writing", file_name);
+
+
+        /* initialize stuff */
+        png->png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+
+        if (!png->png_ptr)
+                abort_("[write_png_file] png_create_write_struct failed");
+
+        png->info_ptr = png_create_info_struct(png->png_ptr);
+        if (!png->info_ptr)
+                abort_("[write_png_file] png_create_info_struct failed");
+
+        if (setjmp(png_jmpbuf(png->png_ptr)))
+                abort_("[write_png_file] Error during init_io");
+
+        png_init_io(png->png_ptr, fp);
+
+
+        /* write header */
+        if (setjmp(png_jmpbuf(png->png_ptr)))
+                abort_("[write_png_file] Error during writing header");
+
+        png_set_IHDR(png->png_ptr, png->info_ptr, png->width, png->height,
+                     png->bit_depth, png->color_type, PNG_INTERLACE_NONE,
+                     PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
+
+        png_write_info(png->png_ptr, png->info_ptr);
+
+
+        /* write bytes */
+        if (setjmp(png_jmpbuf(png->png_ptr)))
+                abort_("[write_png_file] Error during writing bytes");
+
+        png_write_image(png->png_ptr, png->row_pointers);
+
+
+        /* end write */
+        if (setjmp(png_jmpbuf(png->png_ptr)))
+                abort_("[write_png_file] Error during end of write");
+
+        png_write_end(png->png_ptr, NULL);
+
+        /* cleanup heap allocation */
+        for (png->y = 0; png->y < png->height; png->y++)
+                free(png->row_pointers[png->y]);
+        free(png->row_pointers);
+
+        fclose(fp);
+}
+
 
 void process_negativ(char image_path[])
 {
@@ -374,17 +428,40 @@ void process_blur(char image_path[])
     fprintf(stderr, "proessing image for BLUR \n");
 }
 
-void process_black_and_white(char image_path[])
+void process_black_and_white(char image_path[], png_data_struct* png)
 {
     fprintf(stderr, "proessing image for BLACK_AND_WHITE \n");
+
+     if (png_get_color_type(png->png_ptr, png->info_ptr) == PNG_COLOR_TYPE_RGB)
+                abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
+                       "(lacks the alpha channel)");
+
+        if (png_get_color_type(png->png_ptr, png->info_ptr) != PNG_COLOR_TYPE_RGBA)
+                abort_("[process_file] color_type of input file must be PNG_COLOR_TYPE_RGBA (%d) (is %d)",
+                       PNG_COLOR_TYPE_RGBA, png_get_color_type(png->png_ptr, png->info_ptr));
+
+        for (png->y = 0; png->y < png->height; png->y++) 
+        {
+                png_byte* row = png->row_pointers[png->y];
+
+                for (png->x = 0; png->x < png->width; png->x++) 
+                {
+                        png_byte* ptr = &(row[png->x * 4]);
+                        int avg = (ptr[0] + ptr[1] + ptr[2]) / 3;
+                        ptr[0] = ptr[1] = ptr[2] = avg;
+                }
+        }
 }
 
 void process_image(char* image_path, int option, int image_number, int client_id)
 {
     char processed_image_path[128];
-    snprintf(processed_image_path, 128, "files/client%dprocessed_image%d.png", client_id, image_number);
-    
-    int processed = 1;
+    png_data_struct png;
+    snprintf(processed_image_path, 128, "files/client%dimage%d.png", client_id, image_number);
+
+    read_png_file(processed_image_path, &png);
+
+     int processed = 1;
     switch(option)
     {
         case NEGATIV:
@@ -397,11 +474,14 @@ void process_image(char* image_path, int option, int image_number, int client_id
             process_blur(processed_image_path);
             break;
         case BLACK_AND_WHITE:
-            process_black_and_white(processed_image_path);
+            process_black_and_white(processed_image_path, &png);
             break;
         default:
             processed = 0;
     }
+
+    write_png_file(processed_image_path, &png); 
+
     processed = 0; // rem
     if (processed)
         strcpy(image_path, processed_image_path);
