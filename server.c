@@ -411,14 +411,34 @@ void write_png_file(char* file_name, png_data_struct* png)
 }
 
 
-void process_negativ(char image_path[])
+void process_negativ(png_data_struct* png)
 {
     fprintf(stderr, "proessing image for NEGATIV \n");
-    // png_data_struct* png = read_png_file(image_path);
-    // fprintf(stderr, "PNG width: %d, height %d\n", png->width, png->height);
+
+    if (png_get_color_type(png->png_ptr, png->info_ptr) == PNG_COLOR_TYPE_RGB)
+            abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
+                    "(lacks the alpha channel)");
+
+    if (png_get_color_type(png->png_ptr, png->info_ptr) != PNG_COLOR_TYPE_RGBA)
+            abort_("[process_file] color_type of input file must be PNG_COLOR_TYPE_RGBA (%d) (is %d)",
+                    PNG_COLOR_TYPE_RGBA, png_get_color_type(png->png_ptr, png->info_ptr));
+
+    for (png->y = 0; png->y < png->height; png->y++) 
+    {
+            png_byte* row = png->row_pointers[png->y];
+
+            for (png->x = 0; png->x < png->width; png->x++) 
+            {
+                    png_byte* ptr = &(row[png->x * 4]);
+                    
+                    ptr[0] = 255 - ptr[0];
+                    ptr[1] = 255 - ptr[1];
+                    ptr[2] = 255 - ptr[2];
+            }
+    }
 }
 
-void process_sepia(char image_path[],  png_data_struct* png)
+void process_sepia(png_data_struct* png)
 {
     fprintf(stderr, "proessing image for SEPIA \n");
 
@@ -455,14 +475,14 @@ void process_sepia(char image_path[],  png_data_struct* png)
     }
 }
 
-void process_blur(char image_path[])
+void process_blur(png_data_struct* png)
 {
-
+    fprintf(stderr, "processing image for BLUR \n");
 }
 
-void process_black_and_white(char image_path[], png_data_struct* png)
+void process_black_and_white(png_data_struct* png)
 {
-    fprintf(stderr, "proessing image for BLACK_AND_WHITE \n");
+    fprintf(stderr, "processing image for BLACK_AND_WHITE \n");
 
     if (png_get_color_type(png->png_ptr, png->info_ptr) == PNG_COLOR_TYPE_RGB)
             abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
@@ -491,22 +511,22 @@ void process_image(char* image_path, int option, int image_number, int client_id
     png_data_struct png;
     snprintf(processed_image_path, 128, "files/client%dimage%d.png", client_id, image_number);
 
-    read_png_file(processed_image_path, &png);
+    read_png_file(image_path, &png);
 
-     int processed = 1;
+    int processed = 1;
     switch(option)
     {
         case NEGATIV:
-            process_negativ(processed_image_path);
+            process_negativ(&png);
             break;
         case SEPIA:
-            process_sepia(processed_image_path, &png);
+            process_sepia(&png);
             break;
         case BLUR:
-            process_blur(processed_image_path);
+            process_blur(&png);
             break;
         case BLACK_AND_WHITE:
-            process_black_and_white(processed_image_path, &png);
+            process_black_and_white(&png);
             break;
         default:
             processed = 0;
