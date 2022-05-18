@@ -418,14 +418,46 @@ void process_negativ(char image_path[])
     // fprintf(stderr, "PNG width: %d, height %d\n", png->width, png->height);
 }
 
-void process_sepia(char image_path[])
+void process_sepia(char image_path[],  png_data_struct* png)
 {
     fprintf(stderr, "proessing image for SEPIA \n");
+
+    if (png_get_color_type(png->png_ptr, png->info_ptr) == PNG_COLOR_TYPE_RGB)
+            abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
+                    "(lacks the alpha channel)");
+
+    if (png_get_color_type(png->png_ptr, png->info_ptr) != PNG_COLOR_TYPE_RGBA)
+            abort_("[process_file] color_type of input file must be PNG_COLOR_TYPE_RGBA (%d) (is %d)",
+                    PNG_COLOR_TYPE_RGBA, png_get_color_type(png->png_ptr, png->info_ptr));
+
+    for (png->y = 0; png->y < png->height; png->y++) 
+    {
+            png_byte* row = png->row_pointers[png->y];
+
+            for (png->x = 0; png->x < png->width; png->x++) 
+            {
+                png_byte* rgb = &(row[png->x * 4]);
+                float red = ((float)rgb[0] * 0.393) + ((float)rgb[1] * 0.769) + ((float)rgb[2] * 0.189);
+                float green = (((float)rgb[0] * 0.349) + ((float)rgb[1] * 0.686) + ((float)rgb[2] * 0.168));
+                float blue = ((float)rgb[0] * 0.272) + ((float)rgb[1] *0.534) + ((float)rgb[2] * 0.131);
+                
+                if (red > 255)
+                    red = 255;
+                if (green > 255)
+                    green = 255;
+                if (blue > 255)
+                    blue = 255;
+                
+                rgb[0] = (int)(red);
+                rgb[1] = (int)(green);
+                rgb[2] = (int)(blue);
+            }
+    }
 }
 
 void process_blur(char image_path[])
 {
-    fprintf(stderr, "proessing image for BLUR \n");
+
 }
 
 void process_black_and_white(char image_path[], png_data_struct* png)
@@ -468,7 +500,7 @@ void process_image(char* image_path, int option, int image_number, int client_id
             process_negativ(processed_image_path);
             break;
         case SEPIA:
-            process_sepia(processed_image_path);
+            process_sepia(processed_image_path, &png);
             break;
         case BLUR:
             process_blur(processed_image_path);
