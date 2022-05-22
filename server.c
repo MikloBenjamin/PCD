@@ -452,32 +452,134 @@ void process_sepia(png_data_struct* png)
 
     for (png->y = 0; png->y < png->height; png->y++) 
     {
-            png_byte* row = png->row_pointers[png->y];
+        png_byte* row = png->row_pointers[png->y];
 
-            for (png->x = 0; png->x < png->width; png->x++) 
-            {
-                png_byte* rgb = &(row[png->x * 4]);
-                float red = ((float)rgb[0] * 0.393) + ((float)rgb[1] * 0.769) + ((float)rgb[2] * 0.189);
-                float green = (((float)rgb[0] * 0.349) + ((float)rgb[1] * 0.686) + ((float)rgb[2] * 0.168));
-                float blue = ((float)rgb[0] * 0.272) + ((float)rgb[1] *0.534) + ((float)rgb[2] * 0.131);
-                
-                if (red > 255)
-                    red = 255;
-                if (green > 255)
-                    green = 255;
-                if (blue > 255)
-                    blue = 255;
-                
-                rgb[0] = (int)(red);
-                rgb[1] = (int)(green);
-                rgb[2] = (int)(blue);
-            }
+        for (png->x = 0; png->x < png->width; png->x++) 
+        {
+            png_byte* rgb = &(row[png->x * 4]);
+            float red = ((float)rgb[0] * 0.393) + ((float)rgb[1] * 0.769) + ((float)rgb[2] * 0.189);
+            float green = (((float)rgb[0] * 0.349) + ((float)rgb[1] * 0.686) + ((float)rgb[2] * 0.168));
+            float blue = ((float)rgb[0] * 0.272) + ((float)rgb[1] *0.534) + ((float)rgb[2] * 0.131);
+            
+            if (red > 255)
+                red = 255;
+            if (green > 255)
+                green = 255;
+            if (blue > 255)
+                blue = 255;
+            
+            rgb[0] = (int)(red);
+            rgb[1] = (int)(green);
+            rgb[2] = (int)(blue);
+        }
     }
 }
 
 void process_blur(png_data_struct* png)
 {
     fprintf(stderr, "processing image for BLUR \n");
+    if (png_get_color_type(png->png_ptr, png->info_ptr) == PNG_COLOR_TYPE_RGB)
+            abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
+                    "(lacks the alpha channel)");
+
+    if (png_get_color_type(png->png_ptr, png->info_ptr) != PNG_COLOR_TYPE_RGBA)
+            abort_("[process_file] color_type of input file must be PNG_COLOR_TYPE_RGBA (%d) (is %d)",
+                    PNG_COLOR_TYPE_RGBA, png_get_color_type(png->png_ptr, png->info_ptr));
+
+    for (png->y = 0; png->y < png->height; png->y++) 
+    {
+        png_byte* row0;
+        png_byte* row1;
+        png_byte* row2;
+
+        if (png->y == 0){
+            row0 = (png_byte *) malloc(sizeof(png_bytep) * png->height);
+            for (int y = 0; y < png->height; y++)
+                row0[y] = 0;
+        } else {
+            row0 = png->row_pointers[png->y - 1];
+        }
+        
+        row1 = png->row_pointers[png->y];
+
+        if (png->y == png->height - 1){
+            row2 = (png_byte*) malloc(sizeof(png_bytep) * png->height);
+            for (int y = 0; y < png->height; y++)
+                row2[y] = 0;
+        } else {
+            row2 = png->row_pointers[png->y + 1];
+        }
+
+        for (png->x = 0; png->x < png->width; png->x++) 
+        {
+            png_byte* blured_values = &(row1[png->x * 4]);
+
+            png_byte* rgb0_0;
+            png_byte* rgb0_1; 
+            png_byte* rgb0_2;
+
+            png_byte* rgb1_0;
+            png_byte* rgb1_1;
+            png_byte* rgb1_2;
+
+            png_byte* rgb2_0; 
+            png_byte* rgb2_1; 
+            png_byte* rgb2_2;
+
+
+            if (png->x == 0){
+                rgb0_0 = (png_byte *) malloc(sizeof(png_bytep) * png->width);
+                rgb1_0 = (png_byte *) malloc(sizeof(png_bytep) * png->width);
+                rgb2_0 = (png_byte *) malloc(sizeof(png_bytep) * png->width);
+
+                for (int y = 0; y < png->height; y++){
+                    rgb0_0[y] = 0;
+                    rgb1_0[y] = 0;
+                    rgb2_0[y] = 0;
+                }
+            } else {
+                rgb0_0 = &(row0[(png->x - 1) * 4]);
+                rgb1_0 = &(row1[(png->x - 1) * 4]);
+                rgb2_0 = &(row2[(png->x - 1) * 4]);
+            }
+
+            rgb0_1 = &(row0[png->x * 4]);
+            rgb1_1 = &(row1[png->x * 4]);
+            rgb2_1 = &(row2[png->x * 4]);
+           
+           if (png->x == png->width - 1){
+                rgb0_2 = (png_byte *) malloc(sizeof(png_bytep) * png->width);
+                rgb1_2 = (png_byte *) malloc(sizeof(png_bytep) * png->width);
+                rgb2_2 = (png_byte *) malloc(sizeof(png_bytep) * png->width);
+
+                for (int y = 0; y < png->height; y++){
+                    rgb0_2[y] = 0;
+                    rgb1_2[y] = 0;
+                    rgb2_2[y] = 0;
+                }
+           } else {
+                rgb0_2 = &(row0[(png->x + 1) * 4]);
+                rgb1_2 = &(row1[(png->x + 1) * 4]);
+                rgb2_2 = &(row2[(png->x + 1) * 4]);
+           }
+
+            int new_red_value = (rgb0_0[0] + rgb0_1[0] + rgb0_2[0] +
+                        rgb1_0[0] + rgb1_1[0] + rgb1_2[0] +
+                        rgb2_0[0] + rgb2_1[0] + rgb2_2[0]) / 9;
+
+            int new_green_value = (rgb0_0[1] + rgb0_1[1] + rgb0_2[1] +
+                        rgb1_0[1] + rgb1_1[1] + rgb1_2[1] +
+                        rgb2_0[1] + rgb2_1[1] + rgb2_2[1]) / 9;
+
+            int new_blue_value = (rgb0_0[2] + rgb0_1[2] + rgb0_2[2] +
+                        rgb1_0[2] + rgb1_1[2] + rgb1_2[2] +
+                        rgb2_0[2] + rgb2_1[2] + rgb2_2[2]) / 9;
+
+            blured_values[0] = new_red_value;
+            blured_values[1] = new_green_value;
+            blured_values[2] = new_blue_value;
+        }
+    }
 }
 
 void process_black_and_white(png_data_struct* png)
@@ -494,14 +596,14 @@ void process_black_and_white(png_data_struct* png)
 
     for (png->y = 0; png->y < png->height; png->y++) 
     {
-            png_byte* row = png->row_pointers[png->y];
+        png_byte* row = png->row_pointers[png->y];
 
-            for (png->x = 0; png->x < png->width; png->x++) 
-            {
-                    png_byte* ptr = &(row[png->x * 4]);
-                    int avg = (ptr[0] + ptr[1] + ptr[2]) / 3;
-                    ptr[0] = ptr[1] = ptr[2] = avg;
-            }
+        for (png->x = 0; png->x < png->width; png->x++) 
+        {
+                png_byte* ptr = &(row[png->x * 4]);
+                int avg = (ptr[0] + ptr[1] + ptr[2]) / 3;
+                ptr[0] = ptr[1] = ptr[2] = avg;
+        }
     }
 }
 
