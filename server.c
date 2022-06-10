@@ -2,6 +2,8 @@
 
 #define MAX_REQUESTS 100
 #define MAX_SIZE 1024
+#define INFO_SIZE 5
+#define CLIENT_INFO_SIZE 11
 #define HEADER_SIZE 3
 #define MAX_CLIENTS 50
 #define ADDR "127.0.0.1"
@@ -25,12 +27,25 @@ typedef enum MessageType{
 
 typedef enum AdminMessageType{
     DISCONNECT = 0,
-    END = 1
+    END = 1,
+    INFO = 2,
+    KILL_CLIENT_BY_THREAD_ID = 3,
+    KILL_CLIENT_BY_SOCKET_ID = 4
 } AdminMessageType;
+
+typedef struct Client
+{
+    Option option;
+    int number_of_images;
+    int socket_id;
+} Client;
 
 typedef struct Request
 {
-    MessageType message_type;           unsigned length;            char *message;          } Request;
+    MessageType message_type;
+    unsigned length;
+    char *message;
+} Request;
 
 typedef struct ServerSocket
 {
@@ -48,13 +63,18 @@ sem_t end_server;
 int effective_msg_length = MAX_SIZE - HEADER_SIZE;
 
 int client_sockets[MAX_CLIENTS] = {};
+time_t client_start[MAX_CLIENTS] = {};
+Client* clients[MAX_CLIENTS] = {};
+
 int admins = 0, waiting_clients = 1;
 struct sigaction signal_handler;
+
+time_t start_t;
 
 void handle_sigint(int sig_number)
 {
     waiting_clients = 0;
-        sem_post(&end_server);
+    sem_post(&end_server);
 }
 
 void* read_admin(void* conn);
@@ -67,6 +87,7 @@ int create_files_directory_as_needed();
 
 void* run_server(void* port)
 {
+    time(&start_t);
     int PORT = *(int*)port;
 
     signal(SIGINT, handle_sigint);
@@ -106,7 +127,7 @@ void* run_server(void* port)
         printf("Succesfully bound socket!\n");
     }
 
-    if ((listen(server_socket.socket_id, 5)) != 0) {
+    if ((listen(server_socket.socket_id, MAX_CLIENTS)) != 0) {
         printf("!!! Server Failed to start listening !!!\n");
         exit(EXIT_FAILURE);
     }
@@ -122,6 +143,12 @@ void* run_server(void* port)
         exit(1);
     }
 
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        client_sockets[i] = 0;
+        clients[i] = NULL;
+    }
+
     pthread_create(&wait_clients, NULL, wait_for_clients, &server_socket);
     pthread_create(&wait_admins, NULL, wait_admin, NULL);
 
@@ -131,16 +158,81 @@ void* run_server(void* port)
 
     for (int i = 0; i < MAX_CLIENTS; i++)
     {
-        pthread_join(client_threads[i], NULL);
-        if (client_sockets[i] != 0)
+        if (clients[i] != NULL)
         {
-            printf("Closing client: %d\n", i);
             close(client_sockets[i]);
+            pthread_cancel(client_threads[i]);
+            client_start[i] = 0;
+            free(clients[i]);
+            clients[i] = NULL;
         }
     }
     printf("end main\n");
     return EXIT_SUCCESS;
 }
+
+void send_info(int admin_connection)
+{
+    /// nr_clients up_time
+    /// 0   1      2    3
+
+    char info[1024];
+
+    int nr_clients = 0;
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (clients[i] != NULL)
+        {
+            nr_clients++;
+        }
+    }
+
+    info[0] = nr_clients & 0xff;
+    info[1] = (nr_clients >> 8) & 0xff;
+
+    time_t up_t;
+    time(&up_t);
+
+    int uptime = (int)difftime(up_t, start_t);
+    info[2] = uptime & 0xff;
+    info[3] = (uptime >> 8) & 0xff;
+
+    if (send(admin_connection, info, 1024, 0) == -1)
+    {
+        fprintf(stderr, "Error while sending the data.\n");
+        close(admin_connection);
+        exit(1);
+    }
+
+    /// client_socket_id client_thread_id client_uptime client_nr_images client_option
+    /// 0        1        2     3        4       5       6        7         8   9
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (clients[i] != NULL)
+        {
+            int socket_id = client_sockets[i];
+            pthread_t thread_id = client_threads[i];
+
+            time_t end_t;
+            time(&end_t);
+            double upt = difftime(end_t, client_start[i]);
+
+            int nr_images = clients[i]->number_of_images;
+            int option = clients[i]->option;
+
+            snprintf(info, 1024, "%d|%ld|%f|%d|%d", socket_id, thread_id, upt, nr_images, option);
+
+            if (send(admin_connection, info, 1024, 0) == -1)
+            {
+                fprintf(stderr, "Error while sending the data.\n");
+                close(admin_connection);
+                exit(1);
+            }
+        }
+    }
+
+}
+
 
 void* read_admin(void* conn)
 {
@@ -148,25 +240,81 @@ void* read_admin(void* conn)
     char buff[128];
     ssize_t bread;
     printf("Admin thread started\n");
+    char *number;
 
     while(admins == 1 && (bread = read(connfd, buff, sizeof(buff))) > 0)
     {
-        printf("Read from admin: %s , first char:int equivalent %d\n", buff, (int)buff[0]);
-        switch ((int)(buff[0] - 48))
+        switch (buff[0] - 48)
         {
             case DISCONNECT:
+                fprintf(stderr, "Admin DISCONNECT\n");
                 admins = 0;
                 break;
             case END:
+                fprintf(stderr, "Admin END server\n");
                 admins = -1;
-                                sem_post(&end_server);
+                sem_post(&end_server);
+                break;
+            case INFO:
+                fprintf(stderr, "Admin GET info\n");
+                send_info(connfd);
+                break;
+            case KILL_CLIENT_BY_THREAD_ID:
+                fprintf(stderr, "Admin KILL client\n");
+                number = strtok(buff, " ");
+                number = strtok(NULL, " ");
+
+                unsigned long int thread_id = 0;
+
+                for (int i = 0; i < strlen(number) - 1; i++)
+                {
+                    thread_id = thread_id * 10 + (number[i] - '0');
+                }
+
+                for (int i = 0; i < MAX_CLIENTS; i++)
+                {
+                    if (client_threads[i] == thread_id)
+                    {
+                        pthread_cancel(thread_id);
+                        close(client_sockets[i]);
+                        client_sockets[i] = 0;
+                        client_start[i] = 0;
+                        free(clients[i]);
+                        clients[i] = NULL;
+                    }
+                }
+                break;
+            case KILL_CLIENT_BY_SOCKET_ID:
+                fprintf(stderr, "Admin KILL client\n");
+                number = strtok(buff, " ");
+                number = strtok(NULL, " ");
+
+                int socket_id = 0;
+
+                for (int i = 0; i < strlen(number) - 1; i++)
+                {
+                    socket_id = socket_id * 10 + (number[i] - '0');
+                }
+
+                for (int i = 0; i < MAX_CLIENTS; i++)
+                {
+                    if (client_sockets[i] == socket_id)
+                    {
+                        pthread_cancel(client_threads[i]);
+                        close(socket_id);
+                        client_sockets[i] = 0;
+                        client_start[i] = 0;
+                        free(clients[i]);
+                        clients[i] = NULL;
+                    }
+                }
                 break;
             default:
                 break;
         }
         bzero(buff, sizeof(buff));
     }
-        close(connfd);
+    close(connfd);
     printf("Admin thread ended\n");
 }
 
@@ -239,43 +387,43 @@ void* wait_for_clients(void* server)
 
     int len = sizeof(server_socket->socket_address);
 
-
     while (1){
         if (waiting_clients == 0)
         {
             break;
         }
 
-        fprintf(stderr, "Waiting client...\n");
-
         int sockfd = accept(
             server_socket->socket_id,
             (struct sockaddr *) &server_socket->socket_address, 
             &len);
-        if(sockfd >= 0)
+        if(sockfd > 0)
         {
-            fprintf(stderr, "client sockfd: %d\n", sockfd);
             int i;
             for (i = 0; i < MAX_CLIENTS; i++)
             {
                 if (client_sockets[i] == 0)
                 {
+                    Client *client = (Client *) malloc (sizeof(Client) + 1);
+                    time_t start_t;
+                    time(&start_t);
+
                     client_sockets[i] = sockfd;
+                    client_start[i] = start_t;
+
+                    client->socket_id = sockfd;
+                    clients[i] = client;
+
+                    pthread_create(&client_threads[i], NULL, serve_client, client);
                     break;
                 }
             }
-            if (i != MAX_CLIENTS)
-            {
-                printf("Client connected\n");
-                pthread_create(&client_threads[i], NULL, serve_client, &sockfd);
-            }
-                    }
+        }
         else
         {
             fprintf(stderr, "Client connect failed, socket < 0: %d\n", sockfd);
         }
     }
-    
 }
 
 typedef struct png_data_struct
@@ -294,12 +442,12 @@ typedef struct png_data_struct
 
 void abort_(const char * s, ...)
 {
-        va_list args;
-        va_start(args, s);
-        vfprintf(stderr, s, args);
-        fprintf(stderr, "\n");
-        va_end(args);
-        abort();
+    va_list args;
+    va_start(args, s);
+    vfprintf(stderr, s, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+    abort();
 }
 
 void read_png_file(char* image_path, png_data_struct* png)
@@ -356,65 +504,64 @@ void read_png_file(char* image_path, png_data_struct* png)
 
 void write_png_file(char* file_name, png_data_struct* png)
 {
-        /* create file */
-        FILE *fp = fopen(file_name, "wb");
-        if (!fp)
-                abort_("[write_png_file] File %s could not be opened for writing", file_name);
+    /* create file */
+    FILE *fp = fopen(file_name, "wb");
+    if (!fp)
+        abort_("[write_png_file] File %s could not be opened for writing", file_name);
 
 
-        /* initialize stuff */
-        png->png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    /* initialize stuff */
+    png->png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 
-        if (!png->png_ptr)
-                abort_("[write_png_file] png_create_write_struct failed");
+    if (!png->png_ptr)
+        abort_("[write_png_file] png_create_write_struct failed");
 
-        png->info_ptr = png_create_info_struct(png->png_ptr);
-        if (!png->info_ptr)
-                abort_("[write_png_file] png_create_info_struct failed");
+    png->info_ptr = png_create_info_struct(png->png_ptr);
+    if (!png->info_ptr)
+        abort_("[write_png_file] png_create_info_struct failed");
 
-        if (setjmp(png_jmpbuf(png->png_ptr)))
-                abort_("[write_png_file] Error during init_io");
+    if (setjmp(png_jmpbuf(png->png_ptr)))
+        abort_("[write_png_file] Error during init_io");
 
-        png_init_io(png->png_ptr, fp);
-
-
-        /* write header */
-        if (setjmp(png_jmpbuf(png->png_ptr)))
-                abort_("[write_png_file] Error during writing header");
-
-        png_set_IHDR(png->png_ptr, png->info_ptr, png->width, png->height,
-                     png->bit_depth, png->color_type, PNG_INTERLACE_NONE,
-                     PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
-
-        png_write_info(png->png_ptr, png->info_ptr);
+    png_init_io(png->png_ptr, fp);
 
 
-        /* write bytes */
-        if (setjmp(png_jmpbuf(png->png_ptr)))
-                abort_("[write_png_file] Error during writing bytes");
+    /* write header */
+    if (setjmp(png_jmpbuf(png->png_ptr)))
+        abort_("[write_png_file] Error during writing header");
 
-        png_write_image(png->png_ptr, png->row_pointers);
+    png_set_IHDR(
+        png->png_ptr, png->info_ptr, png->width, png->height,
+        png->bit_depth, png->color_type, PNG_INTERLACE_NONE,
+        PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE
+    );
+
+    png_write_info(png->png_ptr, png->info_ptr);
 
 
-        /* end write */
-        if (setjmp(png_jmpbuf(png->png_ptr)))
-                abort_("[write_png_file] Error during end of write");
+    /* write bytes */
+    if (setjmp(png_jmpbuf(png->png_ptr)))
+        abort_("[write_png_file] Error during writing bytes");
 
-        png_write_end(png->png_ptr, NULL);
+    png_write_image(png->png_ptr, png->row_pointers);
 
-        /* cleanup heap allocation */
-        for (png->y = 0; png->y < png->height; png->y++)
-                free(png->row_pointers[png->y]);
-        free(png->row_pointers);
 
-        fclose(fp);
+    /* end write */
+    if (setjmp(png_jmpbuf(png->png_ptr)))
+            abort_("[write_png_file] Error during end of write");
+
+    png_write_end(png->png_ptr, NULL);
+
+    /* cleanup heap allocation */
+    for (png->y = 0; png->y < png->height; png->y++)
+        free(png->row_pointers[png->y]);
+    free(png->row_pointers);
+
+    fclose(fp);
 }
-
 
 void process_negativ(png_data_struct* png)
 {
-    fprintf(stderr, "proessing image for NEGATIV \n");
-
     if (png_get_color_type(png->png_ptr, png->info_ptr) == PNG_COLOR_TYPE_RGB)
             abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
                     "(lacks the alpha channel)");
@@ -425,23 +572,21 @@ void process_negativ(png_data_struct* png)
 
     for (png->y = 0; png->y < png->height; png->y++) 
     {
-            png_byte* row = png->row_pointers[png->y];
+        png_byte* row = png->row_pointers[png->y];
 
-            for (png->x = 0; png->x < png->width; png->x++) 
-            {
-                    png_byte* ptr = &(row[png->x * 4]);
-                    
-                    ptr[0] = 255 - ptr[0];
-                    ptr[1] = 255 - ptr[1];
-                    ptr[2] = 255 - ptr[2];
-            }
+        for (png->x = 0; png->x < png->width; png->x++) 
+        {
+                png_byte* ptr = &(row[png->x * 4]);
+                
+                ptr[0] = 255 - ptr[0];
+                ptr[1] = 255 - ptr[1];
+                ptr[2] = 255 - ptr[2];
+        }
     }
 }
 
 void process_sepia(png_data_struct* png)
 {
-    fprintf(stderr, "proessing image for SEPIA \n");
-
     if (png_get_color_type(png->png_ptr, png->info_ptr) == PNG_COLOR_TYPE_RGB)
             abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
                     "(lacks the alpha channel)");
@@ -477,7 +622,6 @@ void process_sepia(png_data_struct* png)
 
 void process_blur(png_data_struct* png)
 {
-    fprintf(stderr, "processing image for BLUR \n");
     if (png_get_color_type(png->png_ptr, png->info_ptr) == PNG_COLOR_TYPE_RGB)
             abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
                     "(lacks the alpha channel)");
@@ -584,8 +728,6 @@ void process_blur(png_data_struct* png)
 
 void process_black_and_white(png_data_struct* png)
 {
-    fprintf(stderr, "processing image for BLACK_AND_WHITE \n");
-
     if (png_get_color_type(png->png_ptr, png->info_ptr) == PNG_COLOR_TYPE_RGB)
             abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
                     "(lacks the alpha channel)");
@@ -634,23 +776,18 @@ void process_image(char* image_path, int option, int image_number, int client_id
             processed = 0;
     }
 
-    write_png_file(processed_image_path, &png); 
-
-    processed = 0; // rem
-    if (processed)
-        strcpy(image_path, processed_image_path);
+    write_png_file(processed_image_path, &png);
 }
 
 void send_back_image(int connfd, char* image_path)
 {
     char buffer[MAX_SIZE];
 
-    fprintf(stderr, "Trying to read: %s\n", image_path);
 
     FILE* image = fopen(image_path, "rb");
     if(!image)
     {
-        fprintf(stderr, "RIP!\n");
+        fprintf(stderr, "Could not open image %s!\n", image_path);
         exit(1);
     }
     size_t bytes_read;
@@ -673,7 +810,6 @@ void send_back_image(int connfd, char* image_path)
 
     buffer[1] = size & 0xff;
     buffer[2] = (size >> 8) & 0xff;
-    fprintf(stderr, "Sending number of packets: %ld\n", size);
 
     if (send(connfd, buffer, MAX_SIZE, 0) == -1)
     {
@@ -712,7 +848,6 @@ void send_back_image(int connfd, char* image_path)
         buffer[1] = bytes_read & 0xff;
         buffer[2] = (bytes_read >> 8) & 0xff;
 
-        // fprintf(stderr, "Sending packet number: %ld\n", size);
         if (send(connfd, buffer, bytes_read + HEADER_SIZE, 0) == -1)
         {
             fprintf(stderr, "Error while sending the data.\n");
@@ -753,7 +888,10 @@ void send_back_image(int connfd, char* image_path)
 
 void* serve_client(void* conn)
 {
-    int connfd = *(int*)conn;
+    Client* client = (Client*)conn;
+    int connfd = client->socket_id;
+    fprintf(stderr, "Serving client with socket id: %d!\n", connfd);
+
     char buffer[MAX_SIZE];
     ssize_t bytes_read;
     char *image_path = (char *) malloc (128);
@@ -770,13 +908,16 @@ void* serve_client(void* conn)
         fprintf(stderr, "NOT received number of images and filters pachet ... something else arrived\n");
         exit(1);
     }
-    fprintf(stderr, "Recieved NUMBER_OF_IMAGES message!\n");
+
     nr_of_images = 0xff & buffer[1];
     nr_of_images |= (0xff & buffer[2]) << 8;
 
     option = 0xff & buffer[3];
     option |= (0xff & buffer[4]) << 8;
-    fprintf(stderr, "Number of images: %d\n Option: %d\n", nr_of_images, option);
+
+    client->number_of_images = nr_of_images;
+    client->option = option;
+
     bzero(buffer, MAX_SIZE);
 
     int packet_number = 0;
@@ -789,16 +930,13 @@ void* serve_client(void* conn)
         }
         int confirmation = 0;
         request.message_type = buffer[0];
-                switch (request.message_type){
+        switch (request.message_type){
             case CONFIRMATION:
-                fprintf(stderr, "Recieved CONFIRMATION message!\n");
                 break;
             case NUMBER_OF_PACKETS:
-                fprintf(stderr, "Recieved NUMBER_OF_PACKETS message!\n");
                 number_of_packets = 0xff & buffer[1];
                 number_of_packets |= (0xff & buffer[2]) << 8;
 
-                fprintf(stderr, "Number of packets received: %d\n", number_of_packets);
                 snprintf(image_path, 128, "files/client%dimage%d.png", connfd, nr_of_images);
 
                 image = fopen(image_path, "wb");
@@ -807,7 +945,6 @@ void* serve_client(void* conn)
                 packet_number = 0;
                 break;
             case PACKET:
-                // fprintf(stderr,"Recieved PACKET message.\n");
                 request.length = 0xff & buffer[1];
                 request.length |= (0xff & buffer[2]) << 8;
                 request.message = (char*) malloc (request.length);
@@ -818,17 +955,15 @@ void* serve_client(void* conn)
 
         if (confirmation && number_of_packets > 1)
         {
-            // fprintf(stderr, "Sending the confirmation mesage...\n");
             bzero(buffer, MAX_SIZE);
             buffer[0] = CONFIRMATION;
             send(connfd, buffer, 1, 0);
-            // fprintf(stderr, "Confirmation sended. (?)\n\n");
         }
 
         if (request.message != NULL)
         {
-                        fwrite(request.message, 1, request.length, image);
-                        number_of_packets--;
+            fwrite(request.message, 1, request.length, image);
+            number_of_packets--;
             if (number_of_packets == 0)
             {
                 fclose(image);
@@ -836,14 +971,8 @@ void* serve_client(void* conn)
                 send_back_image(connfd, image_path);
                 packet_number = 0;
                 nr_of_images--;
-                fprintf(stderr, "Remaining number of images: %d\n", nr_of_images);
-                
-                if (image_path)
-                {
-                    fprintf(stderr, "FREE: 5\n");
-                }
+    
                 if (nr_of_images == 0){
-                    fprintf(stderr,"------ Nr of images is 0.");
                     break;
                 }
             }
@@ -852,26 +981,25 @@ void* serve_client(void* conn)
         }
         bzero(buffer, MAX_SIZE);
     }
-    fprintf(stderr, "END WHILE\n");
 
     if (bytes_read < 0)
     {
-            fprintf(stderr, "Error while reading from socket: %d", errno);
-            perror(NULL);
+        fprintf(stderr, "Error while reading from socket: %d", errno);
+        perror(NULL);
     }
 
-    printf("client served\n");
     for (int i = 0; i < MAX_CLIENTS; i++)
     {
         if (client_sockets[i] == connfd)
         {
             client_sockets[i] = 0;
+            client_start[i] = 0;
+            free(clients[i]);
+            clients[i] = NULL;
             break;
         }
     }
 
-    fprintf(stderr, "leaving client\n");
-    fprintf(stderr, "Socket closed\n");
     close(connfd);
 }
 

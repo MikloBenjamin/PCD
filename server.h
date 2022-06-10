@@ -21,5 +21,6 @@
 #include <stdarg.h>
 #include <png.h>
 #include <zlib.h>
+#include <time.h>
 
 void* run_server(void* port);
