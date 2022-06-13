@@ -133,8 +133,9 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
     // fread() intoarce numarul de bucati citite (adica ce punem in al treilea argument), in cazul in care intoarce 0 inseamna ca am ajuns la capat
     // fiindca nu se mai citeste nimic
     // Fiecare bucata citita e trimisa serverului
-    while((bytes_read = fread(buffer + HEADER_SIZE, sizeof(char), effective_msg_length, img_descriptor)) == effective_msg_length)
+    while(size > 0)
     {
+        bytes_read = fread(buffer + HEADER_SIZE, sizeof(char), effective_msg_length, img_descriptor);
         buffer[0] = PACKET;                          // Tip de mesaj: trimitere pachet de date
         buffer[1] = bytes_read & 0xff;          // Izolam primul byte din bytes_read
         buffer[2] = (bytes_read >> 8) & 0xff;   // Izolam al doilea byte din bytes_read
@@ -150,24 +151,7 @@ void read_and_send_image(char *dir_path, char *image_name, int socket_fd)
             close(socket_fd);
             exit(4);
         }
-    }
-
-    if (feof(img_descriptor))
-    {
-        buffer[0] = PACKET;                          // Tip de mesaj: trimitere pachet de date
-        buffer[1] = bytes_read & 0xff;          // Izolam primul byte din bytes_read
-        buffer[2] = (bytes_read >> 8) & 0xff;   // Izolam al doilea byte din bytes_read
-
-        sem_wait(&sem_send_package);
-
-        if (send(socket_fd, buffer, bytes_read + HEADER_SIZE, 0) == -1)
-        {
-            fprintf(stderr, "Error while sending the data.\n");
-            free(image_path);
-            fclose(img_descriptor);
-            close(socket_fd);
-            exit(4);
-        }
+        size--;
     }
 
     free(image_path);

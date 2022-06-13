@@ -169,6 +169,7 @@ void* run_server(void* port)
         }
     }
     printf("end main\n");
+    sem_destroy(&end_server);
     close(server_socket.socket_id);
     return EXIT_SUCCESS;
 }
@@ -1009,6 +1010,7 @@ void* serve_client(void* conn)
         }
     }
 
+    fprintf(stderr, "Client served, closing connection\n");
     close(connfd);
 }
 
