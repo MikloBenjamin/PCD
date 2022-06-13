@@ -92,7 +92,7 @@ void* run_server(void* port)
 
     signal(SIGINT, handle_sigint);
 
-    int opt = 1;     int sockfd;
+    int opt = 1;
     ServerSocket server_socket;
 
     server_socket.socket_id = socket(AF_INET, SOCK_STREAM, 0);
@@ -109,7 +109,7 @@ void* run_server(void* port)
     {  
         perror("setsockopt");  
         exit(EXIT_FAILURE);  
-    } 
+    }
 
     bzero(&server_socket.socket_address, sizeof(server_socket.socket_address));
 
@@ -119,7 +119,8 @@ void* run_server(void* port)
 
     if ((bind(server_socket.socket_id, (struct sockaddr*)&server_socket.socket_address, sizeof(server_socket.socket_address))) != 0)
     {
-        printf("!!! Failed to bind Socket !!!\n");
+        fprintf(stderr, "!!! Failed to bind socket for server %d!!!\n", errno);
+        perror(NULL);
         exit(EXIT_FAILURE);
     }
     else
@@ -168,6 +169,7 @@ void* run_server(void* port)
         }
     }
     printf("end main\n");
+    close(server_socket.socket_id);
     return EXIT_SUCCESS;
 }
 
@@ -187,15 +189,12 @@ void send_info(int admin_connection)
         }
     }
 
-    info[0] = nr_clients & 0xff;
-    info[1] = (nr_clients >> 8) & 0xff;
-
     time_t up_t;
     time(&up_t);
 
-    int uptime = (int)difftime(up_t, start_t);
-    info[2] = uptime & 0xff;
-    info[3] = (uptime >> 8) & 0xff;
+    double uptime = difftime(up_t, start_t);
+
+    snprintf(info, 1024, "%d|%f", nr_clients, uptime);
 
     if (send(admin_connection, info, 1024, 0) == -1)
     {
@@ -233,7 +232,6 @@ void send_info(int admin_connection)
 
 }
 
-
 void* read_admin(void* conn)
 {
     int connfd = *(int*)conn;
@@ -248,12 +246,13 @@ void* read_admin(void* conn)
         {
             case DISCONNECT:
                 fprintf(stderr, "Admin DISCONNECT\n");
+                close(connfd);
                 admins = 0;
                 break;
             case END:
                 fprintf(stderr, "Admin END server\n");
+                close(connfd);
                 admins = -1;
-                sem_post(&end_server);
                 break;
             case INFO:
                 fprintf(stderr, "Admin GET info\n");
@@ -322,30 +321,38 @@ void* wait_admin(void* param)
 {
     int PORT = 9375;
 
-    int sockfd, connfd, len;
+    int sockfd = -1, connfd, len, opt = 1;
     struct sockaddr_in servaddr, cli;
    
-        sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1) {
         printf("socket creation failed for admin...\n");
         exit(0);
     }
     else
         printf("Socket successfully created for admin..\n");
+
+    if( setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt)) < 0 )  
+    {  
+        perror("setsockopt admin");  
+        exit(EXIT_FAILURE);  
+    }
+
     bzero(&servaddr, sizeof(servaddr));
    
-        servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = inet_addr("127.0.0.2");
     servaddr.sin_port = htons(PORT);
    
-        if ((bind(sockfd, (SA*)&servaddr, sizeof(servaddr))) != 0) {
-        printf("socket bind failed for admin...\n");
+    if ((bind(sockfd, (SA*)&servaddr, sizeof(servaddr))) != 0) {
+        fprintf(stderr, "!!! Failed to bind socket for admin %d!!!\n", errno);
+        perror(NULL);
         exit(0);
     }
     else
         printf("Socket successfully binded for admin..\n");
    
-        if ((listen(sockfd, 1)) != 0) {
+    if ((listen(sockfd, 1)) != 0) {
         printf("Listen failed for admin...\n");
         exit(0);
     }
@@ -375,7 +382,9 @@ void* wait_admin(void* param)
             break;
         }
     }
+    pthread_cancel(admin);
     close(sockfd);
+    sem_post(&end_server);
 }
 
 void* wait_for_clients(void* server)
@@ -819,8 +828,6 @@ void send_back_image(int connfd, char* image_path)
         exit(1);
     }
 
-    perror(NULL);
-
     bzero(buffer, MAX_SIZE);
     if (recv(connfd, buffer, MAX_SIZE, 0) == -1)
     {
@@ -829,8 +836,6 @@ void send_back_image(int connfd, char* image_path)
         close(connfd);
         exit(1);
     }
-
-    perror(NULL);
 
     if (buffer[0] != CONFIRMATION)
     {
@@ -969,6 +974,10 @@ void* serve_client(void* conn)
                 fclose(image);
                 process_image(image_path, option, nr_of_images, connfd);
                 send_back_image(connfd, image_path);
+                if (remove(image_path) != 0)
+                {
+                    fprintf(stderr, "Could not delete: %s --- after processing it\n", image_path);
+                }
                 packet_number = 0;
                 nr_of_images--;
     

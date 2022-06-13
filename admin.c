@@ -26,12 +26,15 @@ typedef enum OptionType {
 int PORT = 9375;
 
 void showRead();
+void* input(void* param);
 void* receive(void* param);
 void convertUptimeToHMS(int uptime, int *hours, int *minutes, int *seconds);
 
+pthread_t receive_thread, send_thread;
+
 int main(int argc, char* argv[])
 {
-    int sockfd, connfd, len;
+    int sockfd, connfd, len, opt = 1;
     struct sockaddr_in servaddr, cli;
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -44,10 +47,16 @@ int main(int argc, char* argv[])
         printf("Socket successfully created in admin, socket fd: %d!\n", sockfd);
     }
 
+    if( setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt)) < 0 )  
+    {  
+        perror("setsockopt admin");  
+        exit(EXIT_FAILURE);  
+    }
+
     bzero(&servaddr, sizeof(servaddr));
 
     servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    servaddr.sin_addr.s_addr = inet_addr("127.0.0.2");
     servaddr.sin_port = htons(PORT);
 
     if (connect(sockfd, (struct sockaddr*)&servaddr, sizeof(servaddr)) != 0)
@@ -60,28 +69,15 @@ int main(int argc, char* argv[])
         printf("Successfully connected to the server from admin with socket fd: %d!\n", sockfd);
     }
 
-    char buff[128];
     ssize_t bread;
 
-    pthread_t receive_thread;
 
+    pthread_create(&send_thread, NULL, &input, &sockfd);
     pthread_create(&receive_thread, NULL, &receive, &sockfd);
-    showRead();
-    while(1)
-    {
-        fgets(buff, 128, stdin);
-        write(sockfd, buff, sizeof(buff));
-        if (buff[0] == '0' || buff[0] == '1')
-        {
-            break;
-        }
 
-        if (buff[0] == '3' || buff[0] == '4')
-        {
-            showRead();
-        }
-        bzero(buff, 128);
-    }
+    pthread_join(send_thread, NULL);
+
+    close(sockfd);
 }
 
 void showRead()
@@ -120,9 +116,33 @@ char* getOptionAsString(Option option)
     return "";
 }
 
+void* input(void* param)
+{
+    int sockfd = *(int*)param;
+    char buff[128];
+
+    showRead();
+
+    while(1)
+    {
+        fgets(buff, 128, stdin);
+        write(sockfd, buff, sizeof(buff));
+        if (buff[0] == '0' || buff[0] == '1')
+        {
+            pthread_kill(receive_thread, SIGINT);
+            break;
+        }
+
+        if (buff[0] == '3' || buff[0] == '4')
+        {
+            showRead();
+        }
+        bzero(buff, 128);
+    }
+}
+
 void* receive(void* param)
 {
-    fprintf(stderr, "Admin receive started\n");
     int sockfd = *(int*)param;
     char buffer[1024];
     ssize_t bytes_read;
@@ -134,16 +154,19 @@ void* receive(void* param)
         if (bytes_read == 0)
         {
             fprintf(stderr, "Admin receive END, bytes read = 0\n");
+            pthread_kill(send_thread, SIGINT);
             break;
         }
         fprintf(stderr, "-------------------------------------------------------- \n\n");
         fprintf(stderr, "-------------- Admin receive started ------------\n");
 
-        int nr_of_clients = 0xff & buffer[0];
-        nr_of_clients |= (0xff & buffer[1]) << 8;
 
-        int uptime = 0xff & buffer[2];
-        uptime |= (0xff & buffer[3]) << 8;
+        char* number = strtok(buffer, "|");
+
+        int nr_of_clients = atoi(number);
+
+        number = strtok(NULL, "|");
+        int uptime = atoi(number);
 
         fprintf(stderr, "\n\n---------------- SERVER INFO ----------------\n\n");
         fprintf(stderr, "Number of clients: %d\n\n", nr_of_clients);

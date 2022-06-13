@@ -7,3 +7,4 @@ test.*
 !makefile
 files/
 Client3_processed/
+*txt
