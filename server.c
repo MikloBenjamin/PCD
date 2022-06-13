@@ -793,13 +793,13 @@ void send_back_image(int connfd, char* image_path)
 {
     char buffer[MAX_SIZE];
 
-
     FILE* image = fopen(image_path, "rb");
     if(!image)
     {
         fprintf(stderr, "Could not open image %s!\n", image_path);
         exit(1);
     }
+
     size_t bytes_read;
     int effective_msg_length = MAX_SIZE - HEADER_SIZE;
 
@@ -926,7 +926,6 @@ void* serve_client(void* conn)
 
     bzero(buffer, MAX_SIZE);
 
-    int packet_number = 0;
     while(1)
     {
         bytes_read = recv(connfd, buffer, MAX_SIZE, 0);
@@ -948,7 +947,6 @@ void* serve_client(void* conn)
                 image = fopen(image_path, "wb");
 
                 confirmation = 1;
-                packet_number = 0;
                 break;
             case PACKET:
                 request.length = 0xff & buffer[1];
@@ -968,7 +966,12 @@ void* serve_client(void* conn)
 
         if (request.message != NULL)
         {
-            fwrite(request.message, 1, request.length, image);
+            if (request.message != NULL)
+            {
+                fwrite(request.message, 1, request.length, image);
+                free(request.message);
+                request.message = NULL;
+            }
             number_of_packets--;
             if (number_of_packets == 0)
             {
@@ -979,15 +982,12 @@ void* serve_client(void* conn)
                 {
                     fprintf(stderr, "Could not delete: %s --- after processing it\n", image_path);
                 }
-                packet_number = 0;
                 nr_of_images--;
     
                 if (nr_of_images == 0){
                     break;
                 }
             }
-            free(request.message);
-            request.message = NULL;
         }
         bzero(buffer, MAX_SIZE);
     }
