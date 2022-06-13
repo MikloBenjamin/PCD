@@ -6,6 +6,7 @@ import socket
 import math
 import glob
 import time
+import concurrent.futures
 
 HOST = "127.0.0.1"
 PORT = 7366
@@ -18,15 +19,17 @@ NUMBER_OF_PACKETS = 2
 PACKET = 3
 ERROR = 4
 
-confirmation_semaphore = threading.Semaphore()
-image_semaphore = threading.Semaphore(0)
+confirmation_semaphore = threading.Semaphore(0) # semafor de confirmare pachete
+image_semaphore = threading.Semaphore(0) # semafor pentru pachete de imagini
+
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+# functie pentru scrierea afisarilor intr-un fisier
 log_file = None
 def log(text):
     log_file.write(text + "\n")
 
-#  help for command
+#  documentatia comenzii
 def commandDoc():
     parser = argparse.ArgumentParser(description='With this command you send information to the server about your image processing.')
     parser.add_argument('-fi', type=str, help='a path for a Folder with Image', required=True)
@@ -40,7 +43,7 @@ def commandDoc():
     args = parser.parse_args()
     return args
 
-# command verification
+# verificarea comenzii
 def commandAnalyze(argumente):
     options = []
     for arg in vars(argumente):
@@ -72,37 +75,32 @@ def commandAnalyze(argumente):
             op = 3
         return 0, options[0], options[1], op
 
-# get number of images and option from buffer
-def getNumberOfImageAndOption(buffer):
-    number_of_packets = 0xff & buffer[1]
-    number_of_packets |= (0xff & buffer[2]) << 8
-    option_bytes = 0xff & buffer[3]
-    option_bytes |= (0xff & buffer[4]) << 8
-
-    return number_of_packets, option_bytes
-
-# get number of image packets
+# decodificarea numarului de imagini
 def getNumberOfImagePackets(buffer):
     number_of_packets = 0xff & buffer[1]
     number_of_packets |= (0xff & buffer[2]) << 8
 
     return number_of_packets
 
+# functie pentru convertare in bytes
 def convertInBytes(number):
     number_in_bytes1 = number & 0xff
     number_in_bytes2 = (number >> 8) & 0xff
 
     return number_in_bytes1, number_in_bytes2
 
+# functie pentru creare director
 def createFolder(path):
     if not os.path.exists(path):
         os.mkdir(path)
         log(f"Directory for processed images '{path}' is created.")
 
+# firul de executie care trimite informatiile catre server 
 def sendImages():
     createFolder(pimage_folder_path)
 
-    for img in list_of_images:
+    for img_index in range(len(list_of_images)):
+        img = list_of_images[img_index]
         image = None
         try:
             image = open(img, "rb")
@@ -110,6 +108,7 @@ def sendImages():
             log(error)
             continue
 
+        # calcularea numarul pachetelor si convertarea acesteia in bytes
         image.seek(0, io.SEEK_END)
         nr_of_packets =  math.ceil(image.tell() / PACKET_SIZE)
         image.seek(0, io.SEEK_SET)
@@ -117,28 +116,31 @@ def sendImages():
 
         log(f"Sending image: {img}")
 
-        s.send(bytearray([NUMBER_OF_PACKETS, nr_pack_in_bytes1, nr_pack_in_bytes2])) 
-        
+        s.send(bytearray([NUMBER_OF_PACKETS, nr_pack_in_bytes1, nr_pack_in_bytes2]))
+
+        # asteapta confirmare
         confirmation_semaphore.acquire()
-        packet_number = 0
-        while packet_number < nr_of_packets:
+
+        # inceperea trimiterii pachetelor cu parti din imagine
+        while nr_of_packets > 0:
             image_bytes_read = image.read(PACKET_SIZE)
             image_packet_size = len(image_bytes_read)
             packet_size_in_bytes1, packet_size_in_bytes2 = convertInBytes(image_packet_size)
             
             s.send(bytearray([PACKET, packet_size_in_bytes1, packet_size_in_bytes2]) + image_bytes_read)
             
-            if packet_number + 1 < nr_of_packets:
+            if nr_of_packets > 1:
+               # asteapta confirmare
                 confirmation_semaphore.acquire()
 
-            packet_number += 1
+            nr_of_packets -= 1
         image.close()
-        log("### WAITING BEFORE SENDING NEXT IMAGE ###")
-        image_semaphore.acquire()
-        log("### CAN SEND NEXT IMEAGE ###")
-        # time.sleep(1)
-        
+        if img_index < (len(list_of_images) - 1):
+            image_semaphore.acquire()
+            log("### CAN SEND NEXT IMEAGE ###")
 
+        
+# firul de executie care primeste informatii de la server 
 def recieveImages():
     global nr_of_image
 
@@ -147,24 +149,36 @@ def recieveImages():
     name_counter = 0
     new_file = None
     while nr_of_image > 0:
+        # primeste un mesaj
         packet_from_server = s.recv(BUFF_MAX_SIZE)
         if len(packet_from_server) <= 0:
             break
+
+        # caz de confirmare
         if packet_from_server[0] == CONFIRMATION:
+            # print(f"Recieve: confirmation_semaphore 1before - {confirmation_semaphore._value}")
             confirmation_semaphore.release()
+            # print(f"Recieve: confirmation_semaphore 1after - {confirmation_semaphore._value}")
             continue
+
+        # caz de pachet cu numar de parti de imagini 
         elif packet_from_server[0] == NUMBER_OF_PACKETS:
             log(f"recieveImages: I recieved packet with type {NUMBER_OF_PACKETS}")
             number_of_packets_from_server = getNumberOfImagePackets(packet_from_server) + 1
             createFolder(f"{pimage_folder_path}/{option_str[option]}")
             new_file = open(f"{pimage_folder_path}/{option_str[option]}/{list_of_image_names[name_counter]}", "wb")
-            name_counter += 1   
+            name_counter += 1 
+        
+        # caz de pachet cu bucata de imagine
         elif packet_from_server[0] == PACKET:
-            # log(f"recieveImages: I recieved packet with type {PACKET}")
             new_file.write(packet_from_server[PACKET:])
+
+        # decrementam numarul de pachete pentru la final sa nu mai trimita confirmare
         if number_of_packets_from_server > 0:
             number_of_packets_from_server -= 1
             s.send(bytearray([CONFIRMATION]))
+
+        # daca nu mai sunt pachete inseamna ca putem salva imaginea (daca aceasta exista)
         if number_of_packets_from_server == 0:
             if new_file is not None:
                 number_of_packets_from_server = -1
@@ -172,10 +186,12 @@ def recieveImages():
                 log(f"recieveImages: Image '{list_of_image_names[name_counter - 1]}' SAVED! Saved in: {pimage_folder_path}{str(option)}\n ")
                 new_file.close()
                 new_file = None
+                # print(f"Recieve: image_semaphore 2before - {image_semaphore._value}")
                 image_semaphore.release()
+                # print(f"Recieve: image_semaphore 2after - {image_semaphore._value}")
 
 
-if __name__ == "__main__":    
+if __name__ == "__main__":
     arguments = commandDoc()
     correct, image_folder_path, pimage_folder_path, option = commandAnalyze(arguments)
     if correct == 1:
@@ -186,22 +202,26 @@ if __name__ == "__main__":
         log("Client_3: Need image folder path.")
     else:
         s.connect((HOST, PORT))
-
+        
+        # se creaza lista cu imagini
         list_of_image_names = [name for name in os.listdir(image_folder_path) if name.endswith(".png")]
         list_of_images = glob.glob(f"{image_folder_path}/*.png")
         nr_of_image = len(list_of_images)
+
+        # se converteste numarul de imagini, optiounea si pachet descriptorul in bytes pentru a trimi catre server
         nr_image_bytes1, nr_image_bytes2 = convertInBytes(nr_of_image)
         option_bytes1, option_bytes2 = convertInBytes(option)
 
         buffer = bytearray([NR_IMAGES_AND_OP, nr_image_bytes1, nr_image_bytes2, option_bytes1, option_bytes2])
         s.send(buffer) 
         
+        # se creaza firele de executie pentru trimitere poze si primire poze
         thread_send_images = threading.Thread(target=sendImages)
         thread_recieve_processed_images = threading.Thread(target=recieveImages)
-
+        
         thread_send_images.start()
         thread_recieve_processed_images.start()
-
+        
         thread_send_images.join()
         thread_recieve_processed_images.join()
 
